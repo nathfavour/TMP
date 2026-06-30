@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "proto:gen": "mkdir -p src/lib/tmp/generated && pbjs -t static-module -w commonjs -o src/lib/tmp/generated/tendon.js proto/tendon.proto && pbts -o src/lib/tmp/generated/tendon.d.ts src/lib/tmp/generated/tendon.js",
+    "prebuild": "npm run proto:gen"
   },
   "dependencies": {
     "next": "16.2.9",

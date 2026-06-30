@@ -11,7 +11,7 @@ export async function GET() {
 
   return NextResponse.json({
     protocol: "TMP v3",
-    codec: "base64(JSON) development codec (protobuf upgrade path retained)",
+    codec: "base64(protobuf) wire format per proto/tendon.proto",
     samples: {
       unicast,
       multicast,

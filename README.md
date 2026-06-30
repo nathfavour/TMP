@@ -28,11 +28,14 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Current implementation note
 
-The codec currently uses `base64(JSON)` as a development scaffold to accelerate POC iteration. The code is intentionally structured for a direct swap to protobuf byte serialization without changing UI or route contracts.
+Envelopes serialize to **Protocol Buffers** (`proto/tendon.proto`) and are Base64-encoded for Nostr `content` fields. Regenerate bindings after schema edits:
+
+```bash
+npm run proto:gen
+```
 
 ## Next protocol milestones
 
-1. Compile and integrate official TMP protobuf schema for binary wire format.
-2. Add passkey + Argon2id vault unlock pathways.
-3. Add OPFS/SQLite worker persistence and Negentropy reconciliation loop.
-4. Implement gift-wrap unicast and epoch-based multicast key workflows.
+1. Add passkey + Argon2id vault unlock pathways.
+2. Add OPFS/SQLite worker persistence and Negentropy reconciliation loop.
+3. Implement gift-wrap unicast and epoch-based multicast key workflows.
