@@ -1,36 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tendon Message Protocol (TMP) - Next.js POC
+
+This repository contains the initial TMP v3 protocol implementation surface and a Next.js proof-of-concept UI.
+
+## Included now
+
+- `ARCHITECTURE.MD`: saved TMP v3 architecture specification.
+- `AGENTS.md`: project agent operating guide.
+- `.agents/skills/*`: foundational local skill packs for TMP work.
+- `src/lib/tmp/*`: typed protocol models, envelope builders, and encoding helpers.
+- `src/app/api/protocol/envelope/route.ts`: round-trip encode/decode API endpoint.
+- `src/app/page.tsx`: protocol dashboard for sample unicast, multicast, and directive events.
 
 ## Getting Started
 
-First, run the development server:
+Run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Protocol endpoint
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `GET /api/protocol/envelope` returns sample TMP envelopes and a Nostr-wrapped event.
+- `POST /api/protocol/envelope` accepts `{ "envelope": <TendonEnvelope> }` and returns encoded/decoded round-trip data.
 
-## Learn More
+## Current implementation note
 
-To learn more about Next.js, take a look at the following resources:
+The codec currently uses `base64(JSON)` as a development scaffold to accelerate POC iteration. The code is intentionally structured for a direct swap to protobuf byte serialization without changing UI or route contracts.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Next protocol milestones
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Compile and integrate official TMP protobuf schema for binary wire format.
+2. Add passkey + Argon2id vault unlock pathways.
+3. Add OPFS/SQLite worker persistence and Negentropy reconciliation loop.
+4. Implement gift-wrap unicast and epoch-based multicast key workflows.
