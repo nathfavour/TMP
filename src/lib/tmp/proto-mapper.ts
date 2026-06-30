@@ -1,4 +1,5 @@
 import { tendon } from "@/lib/tmp/generated";
+import type { tendon as TendonProto } from "@/lib/tmp/generated/tendon";
 import { base64ToBytes, bytesToBase64, bytesToHex, hexToBytes, toSafeNumber } from "@/lib/tmp/bytes";
 import {
   CommandType,
@@ -9,7 +10,10 @@ import {
   type UnicastMail,
 } from "@/lib/tmp/types";
 
-const { TendonEnvelope, SystemDirective: SystemDirectiveProto } = tendon.protocol.v3;
+const { TendonEnvelope } = tendon.protocol.v3;
+
+type ProtoCommandType = TendonProto.protocol.v3.SystemDirective.CommandType;
+type ProtoEnvelope = TendonProto.protocol.v3.TendonEnvelope;
 
 function mapAttachmentToProto(attachment: AttachmentMetadata) {
   return {
@@ -94,13 +98,13 @@ function mapMulticastFromProto(chat: {
 
 function mapDirectiveToProto(directive: SystemDirective) {
   return {
-    command: directive.command as SystemDirectiveProto.CommandType,
+    command: directive.command as ProtoCommandType,
     payloadBytes: base64ToBytes(directive.payload_bytes),
   };
 }
 
 function mapDirectiveFromProto(directive: {
-  command?: SystemDirectiveProto.CommandType | null;
+  command?: ProtoCommandType | null;
   payloadBytes?: Uint8Array | null;
 }): SystemDirective {
   return {
@@ -109,7 +113,7 @@ function mapDirectiveFromProto(directive: {
   };
 }
 
-export function envelopeToProto(envelope: TendonEnvelope): tendon.protocol.v3.TendonEnvelope.$Shape {
+export function envelopeToProto(envelope: TendonEnvelope): TendonProto.protocol.v3.TendonEnvelope.$Shape {
   const base = {
     protocolVersion: envelope.protocol_version,
     dispatchTimestampUtc: envelope.dispatch_timestamp_utc,
@@ -139,7 +143,7 @@ export function envelopeToProto(envelope: TendonEnvelope): tendon.protocol.v3.Te
   }
 }
 
-export function envelopeFromProto(message: tendon.protocol.v3.TendonEnvelope): TendonEnvelope {
+export function envelopeFromProto(message: ProtoEnvelope): TendonEnvelope {
   const base = {
     protocol_version: message.protocolVersion ?? 0,
     dispatch_timestamp_utc: toSafeNumber(message.dispatchTimestampUtc ?? 0),
