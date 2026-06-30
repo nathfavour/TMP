@@ -12,7 +12,7 @@
 
 ## Engineering Constraints
 - Keep protocol structures strongly typed and versioned (`protocol_version` must always be explicit).
-- Maintain compatibility with strict binary serialization goals (Protobuf-first, JSON only for dev scaffolding).
+- Maintain compatibility with strict binary serialization goals (Protobuf wire format via `proto/tendon.proto`).
 - Design every subsystem for offline-first hydration and deterministic local replay.
 - Never rely on relay timestamps as authoritative truth; prefer local reconciliation semantics.
 
