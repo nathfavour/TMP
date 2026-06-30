@@ -1,0 +1,52 @@
+syntax = "proto3";
+package tendon.protocol.v3;
+
+message TendonEnvelope {
+  uint32 protocol_version = 1;
+  int64 dispatch_timestamp_utc = 2;
+  string capability_token = 3;
+  bytes cryptographic_nonce = 4;
+
+  oneof payload {
+    UnicastMail unicast_mail = 5;
+    MulticastChat multicast_chat = 6;
+    SystemDirective system_directive = 7;
+  }
+}
+
+message UnicastMail {
+  string message_id = 1;
+  string thread_id = 2;
+  string subject = 3;
+  string body_plaintext = 4;
+  repeated string cc_recipients_npub = 5;
+  repeated AttachmentMetadata attachments = 6;
+}
+
+message MulticastChat {
+  string group_id = 1;
+  uint64 group_epoch = 2;
+  string client_message_id = 3;
+  string body_content = 4;
+  repeated string interactive_mentions = 5;
+}
+
+message AttachmentMetadata {
+  string content_address_hash = 1;
+  uint64 storage_size_bytes = 2;
+  string file_mime_type = 3;
+  string distributed_url_hint = 4;
+  bytes file_decryption_key = 5;
+}
+
+message SystemDirective {
+  enum CommandType {
+    UNKNOWN = 0;
+    KEY_ROTATION_NOTICE = 1;
+    CAPABILITY_REVOCATION = 2;
+    GROUP_MEMBERSHIP_SYNC = 3;
+    EPOCH_COMMIT = 4;
+  }
+  CommandType command = 1;
+  bytes payload_bytes = 2;
+}
