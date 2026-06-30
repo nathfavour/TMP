@@ -16,7 +16,7 @@ This repository contains the initial TMP v3 protocol implementation surface and 
 Run the development server:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
@@ -31,7 +31,7 @@ Open [http://localhost:3000](http://localhost:3000).
 Envelopes serialize to **Protocol Buffers** (`proto/tendon.proto`) and are Base64-encoded for Nostr `content` fields. Regenerate bindings after schema edits:
 
 ```bash
-npm run proto:gen
+pnpm run proto:gen
 ```
 
 ## Next protocol milestones
