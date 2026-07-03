@@ -1,4 +1,4 @@
-# Tendon Message Protocol (TMP) Architecture Specification v3.0
+# Tendon Message Protocol (TMP) Architecture Specification v3.0.1
 
 The Tendon Message Protocol (TMP) is a serverless, client-dense, local-first application-layer protocol designed to unify asynchronous communications (asymmetric unicast email topologies and symmetric multicast chat topologies) over an untrusted, stateless transport layer (Nostr). TMP shifts identity management, access authorization, message indexing, state synchronization, and data serialization entirely to the user's local computing runtime, leveraging public DNS/TLS infrastructure for verifiable global namespaces without centralized database management or ledger consensus.
 
@@ -44,6 +44,7 @@ Key_password = Argon2id(password, salt=S_random, m=65536, t=3, p=4)
 ```
 
 - **Security Bounds**: The 64MB memory footprint, 3 time iterations, and 4 parallel execution lanes are strictly computed on the edge machine. The explicit generation of a unique random salt ensures resistance against targeted dictionary pre-computation attacks, even if the user's public address or vault file is leaked from an open relay.
+- **Mobile WASM Fallback Matrix**: Because multi-threaded execution (`p=4`) depends on `SharedArrayBuffer` (which requires COOP/COEP headers to be set by the hosting server), runtimes operating on static endpoints (e.g. basic GitHub Pages) MUST support a single-threaded fallback mode. In this mode, execution parameters dynamically adapt (`p=1`, `m=32768`, `t=1` to `t=2`) to guarantee key derivation finishes in under 2 seconds on mobile web environments without falling below secure entropy boundaries.
 
 #### Pathway 3: BIP-39 Recovery Phrase (Absolute Fallback)
 - A standard 12 or 24-word human-readable mnemonic seed block.
@@ -205,9 +206,9 @@ message SystemDirective {
           +───────────────► Exposed Exterior Tag: ONLY Recipient's ['p'] Tag
 ```
 
-### 6.2 Multicast Pipeline: Headless Epoch Group Commits (HEGC)
-
 Multicast uses an append-only State Transaction DAG keyed by room ID tag (`h`) and segmented by epochs. Membership changes are committed as signed state mutations with key ratchets for forward/backward secrecy.
+
+- **Epoch Commit Race Mitigation**: If conflicting group mutation events (e.g. concurrent invite and evict actions) claim the same epoch sequence index ($\text{Epoch}_{n+1}$), client runtimes apply a deterministic tie-breaker rule. The conflicting commits are sorted lexicographically by their event ID string hash. The event with the lower lexical hash is committed as the authoritative state transition for $\text{Epoch}_{n+1}$. The client that authored the losing commit must discard it, synchronize to the winning transition, and re-compute its mutation event as $\text{Epoch}_{n+2}$.
 
 ## 7. Network Protection & Anti-Spam Framework
 
@@ -223,6 +224,7 @@ Capability Token = SHA-256(Recipient_nsec + Sender_npub)
 
 - Approved senders include capability token to bypass PoW.
 - Revocation is local: recipient marks token invalid and sender falls back to PoW.
+- **Replay Prevention Enforcement**: Capability Tokens and all matching `SystemDirective` payloads MUST be encapsulated strictly within the Section 6.1 Gift-Wrap pipeline. Transmitting static tokens in plaintext exposes them to network sniffing and replay attacks; single-use ephemeral wrapping prevents public exposure on open relays.
 
 ## 8. Large Asset Offloading Subsystem (Media Attachments)
 
@@ -242,3 +244,4 @@ Capability Token = SHA-256(Recipient_nsec + Sender_npub)
 - Attachments are encrypted locally with unique symmetric keys.
 - Encrypted blobs are uploaded out-of-band (NIP-96 compatible storage nodes).
 - Message envelopes contain only metadata pointers and keys needed for recipient retrieval/decryption.
+- **Base64 Payload Threshold Offloading**: To prevent high CPU serialization costs and avoid relay event size rejections (often capped at 64KB–100KB), any dynamic payload or system directive structure exceeding 48KB in raw size MUST bypass inline Base64 serialization. Instead, the runtime must write the payload to raw binary, encrypt it using the local AES-GCM media pipeline, and upload it as a static content-addressed resource to a Blossom storage node, referencing the attachment pointer in the parent message rumor structure.
