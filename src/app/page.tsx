@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import styles from "./page.module.css";
 
 interface Email {
   id: string;
@@ -22,6 +21,7 @@ export default function Home() {
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>("1");
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [mobileView, setMobileView] = useState<"list" | "detail">("list");
 
   // Credentials State
   const [credentials, setCredentials] = useState<{
@@ -85,10 +85,9 @@ export default function Home() {
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
 
-
-
   const handleSelectFolder = (folder: "inbox" | "sent" | "drafts") => {
     setActiveFolder(folder);
+    setMobileView("list");
     const folderEmails = emails.filter((e) => e.folder === folder);
     if (folderEmails.length > 0) {
       setSelectedEmailId(folderEmails[0].id);
@@ -98,7 +97,6 @@ export default function Home() {
   };
 
   const handleConnectSetup = () => {
-    // Generate a pseudo-random pubkey for display
     const randomHex = Array.from({ length: 16 }, () =>
       Math.floor(Math.random() * 16).toString(16)
     ).join("");
@@ -140,7 +138,6 @@ export default function Home() {
     setComposeBody("");
     setIsComposeOpen(false);
     
-    // Automatically switch to Sent folder to view sent mail
     handleSelectFolder("sent");
     setSelectedEmailId(newEmail.id);
   };
@@ -155,7 +152,6 @@ export default function Home() {
     setAuthStep("choose");
   };
 
-  // Filters emails based on search query and folder
   const filteredEmails = emails.filter((email) => {
     if (email.folder !== activeFolder) return false;
     if (!searchQuery) return true;
@@ -172,163 +168,224 @@ export default function Home() {
   const selectedEmail = emails.find((e) => e.id === selectedEmailId);
 
   return (
-    <div className={styles.container}>
-      {/* Topbar navigation */}
-      <header className={styles.topbar}>
-        <div className={styles.logo}>
-          <div className={styles.logoIcon}>T</div>
-          <span>TENDON MAIL</span>
+    <div className="flex flex-col h-screen w-screen bg-[#0b0a09] text-[#ededed] overflow-hidden select-none">
+      
+      {/* Topbar */}
+      <header className="flex items-center justify-between h-16 bg-[#161412] border-b border-white/5 px-6 z-10">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center w-8 h-8 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 font-mono font-bold text-sm">
+            T
+          </div>
+          <span className="font-mono font-bold text-sm tracking-wider text-emerald-400">TENDON MAIL</span>
         </div>
 
-        <div className={styles.searchBar}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        {/* Desktop search */}
+        <div className="hidden md:flex items-center gap-3 w-96 bg-[#0b0a09] border border-white/5 rounded-lg h-10 px-4 focus-within:border-emerald-500/50 transition-colors">
+          <svg className="text-[#a3a3a3]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
           <input
             type="text"
             placeholder="Search local mailbox..."
-            className={styles.searchInput}
+            className="bg-transparent border-none w-full text-[#ededed] outline-none text-sm"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
 
-        <div className={styles.topActions}>
+        <div className="flex items-center gap-4">
           {credentials.authMethod !== "None" ? (
-            <div className={styles.connectedBadge} onClick={() => setIsConnectDrawerOpen(true)}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)" }}></span>
+            <div 
+              className="flex items-center gap-2 bg-emerald-500/5 border border-emerald-500/20 px-3 py-1.5 rounded-lg font-mono text-xs text-emerald-400 hover:border-emerald-400 cursor-pointer transition-colors"
+              onClick={() => setIsConnectDrawerOpen(true)}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
               <span>{credentials.alias}@{credentials.domain}</span>
             </div>
           ) : (
-            <button className={styles.connectBtn} onClick={() => setIsConnectDrawerOpen(true)}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <button 
+              className="flex items-center gap-2 bg-transparent text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg font-mono text-xs hover:bg-emerald-500 hover:text-black hover:shadow-[0_0_12px_rgba(16,185,129,0.3)] transition-all cursor-pointer"
+              onClick={() => setIsConnectDrawerOpen(true)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
                 <polyline points="10 17 15 12 10 7" />
                 <line x1="15" y1="12" x2="3" y2="12" />
               </svg>
-              <span>CONNECT VAULT</span>
+              <span>CONNECT</span>
             </button>
           )}
         </div>
       </header>
 
-      {/* Main Mail layout */}
-      <div className={styles.main}>
-        <aside className={styles.sidebar}>
+      {/* Main Container */}
+      <div className="flex flex-1 overflow-hidden pb-16 md:pb-0">
+        
+        {/* Desktop Sidebar */}
+        <aside className="hidden md:flex flex-col justify-between w-64 bg-[#161412] border-r border-white/5 p-4">
           <div>
-            <button className={styles.composeBtn} onClick={() => setIsComposeOpen(true)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <button 
+              className="flex items-center justify-center gap-2 bg-emerald-500 text-black font-semibold py-3 px-4 rounded-lg w-full text-sm hover:-translate-y-[1px] hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] cursor-pointer transition-all mb-6"
+              onClick={() => setIsComposeOpen(true)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
               <span>COMPOSE</span>
             </button>
 
-            <nav className={styles.folderList}>
+            <nav className="flex flex-col gap-1">
               <div
-                className={`${styles.folderItem} ${activeFolder === "inbox" ? styles.folderItemActive : ""}`}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm cursor-pointer transition-colors ${
+                  activeFolder === "inbox" ? "bg-emerald-500/10 text-emerald-400 font-semibold" : "text-[#a3a3a3] hover:bg-white/5 hover:text-[#ededed]"
+                }`}
                 onClick={() => handleSelectFolder("inbox")}
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
                   <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
                 </svg>
                 <span>Inbox</span>
               </div>
               <div
-                className={`${styles.folderItem} ${activeFolder === "sent" ? styles.folderItemActive : ""}`}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm cursor-pointer transition-colors ${
+                  activeFolder === "sent" ? "bg-emerald-500/10 text-emerald-400 font-semibold" : "text-[#a3a3a3] hover:bg-white/5 hover:text-[#ededed]"
+                }`}
                 onClick={() => handleSelectFolder("sent")}
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="22" y1="2" x2="11" y2="13" />
                   <polygon points="22 2 15 22 11 13 2 9 22 2" />
                 </svg>
                 <span>Sent</span>
               </div>
               <div
-                className={`${styles.folderItem} ${activeFolder === "drafts" ? styles.folderItemActive : ""}`}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm cursor-pointer transition-colors ${
+                  activeFolder === "drafts" ? "bg-emerald-500/10 text-emerald-400 font-semibold" : "text-[#a3a3a3] hover:bg-white/5 hover:text-[#ededed]"
+                }`}
                 onClick={() => handleSelectFolder("drafts")}
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
                   <line x1="16" y1="13" x2="8" y2="13" />
                   <line x1="16" y1="17" x2="8" y2="17" />
-                  <polyline points="10 9 9 9 8 9" />
                 </svg>
                 <span>Drafts</span>
               </div>
             </nav>
           </div>
 
-          <div className={styles.sidebarFooter}>
+          <div className="font-mono text-[10px] text-[#a3a3a3] text-center pt-4 border-t border-white/5">
             <div>PORT: 5003</div>
-            <div style={{ marginTop: 4, color: "var(--accent)" }}>TMP v3.0.0</div>
+            <div className="mt-1 text-emerald-400">TMP v3.0.0</div>
           </div>
         </aside>
 
-        {/* Content area: list + details split layout */}
-        <div className={styles.contentArea}>
-          <div className={styles.emailList}>
-            <div className={styles.listHeader}>
-              <span className={styles.listTitle}>{activeFolder}</span>
-              <span className={styles.badgeMono}>{filteredEmails.length} messages</span>
+        {/* Content Body */}
+        <div className="flex flex-1 overflow-hidden bg-[#0b0a09]">
+          
+          {/* Email list pane */}
+          <div className={`flex-1 flex-col overflow-y-auto border-r border-white/5 ${
+            mobileView === "detail" ? "hidden md:flex" : "flex"
+          }`}>
+            <div className="flex justify-between items-center px-6 py-4 border-b border-white/5 bg-[#161412]/20">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#ededed]">{activeFolder}</span>
+              <span className="font-mono text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-[#a3a3a3]">
+                {filteredEmails.length} messages
+              </span>
             </div>
 
             {filteredEmails.length === 0 ? (
-              <div className={styles.emptyState}>
+              <div className="flex-1 flex flex-col items-center justify-center text-[#a3a3a3] gap-3 p-10">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <rect x="2" y="4" width="20" height="16" rx="2" />
                   <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
                 </svg>
-                <span>No emails in {activeFolder}</span>
+                <span className="text-sm">No emails in {activeFolder}</span>
               </div>
             ) : (
-              filteredEmails.map((email) => (
-                <div
-                  key={email.id}
-                  className={`${styles.emailItem} ${selectedEmailId === email.id ? styles.emailItemActive : ""}`}
-                  onClick={() => setSelectedEmailId(email.id)}
-                >
-                  <div className={styles.emailMeta}>
-                    <span className={styles.emailSender}>{email.senderName}</span>
-                    <span className={styles.emailTime}>{email.time}</span>
+              <div className="flex flex-col">
+                {filteredEmails.map((email) => (
+                  <div
+                    key={email.id}
+                    className={`relative p-5 border-b border-white/5 cursor-pointer transition-colors hover:bg-white/10 ${
+                      selectedEmailId === email.id ? "bg-emerald-500/5" : ""
+                    }`}
+                    onClick={() => {
+                      setSelectedEmailId(email.id);
+                      setMobileView("detail");
+                    }}
+                  >
+                    {selectedEmailId === email.id && (
+                      <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-emerald-400"></div>
+                    )}
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs font-semibold text-[#ededed]">{email.senderName}</span>
+                      <span className="font-mono text-[10px] text-[#a3a3a3]">{email.time}</span>
+                    </div>
+                    <div className="text-xs font-medium text-[#ededed] mb-1">{email.subject}</div>
+                    <div className="text-xs text-[#a3a3a3] overflow-hidden text-overflow-ellipsis whitespace-nowrap">
+                      {email.body}
+                    </div>
                   </div>
-                  <div className={styles.emailSubject}>{email.subject}</div>
-                  <div className={styles.emailSnippet}>{email.body}</div>
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </div>
 
-          {/* Email detail view panel */}
-          <div className={styles.detailView}>
+          {/* Email detail pane */}
+          <div className={`flex-1 md:w-1/2 flex-col overflow-y-auto bg-[#161412] ${
+            mobileView === "list" ? "hidden md:flex" : "flex"
+          }`}>
             {selectedEmail ? (
-              <>
-                <div className={styles.detailHeader}>
-                  <div className={styles.detailActions}>
-                    <button className={styles.actionBtn}>Reply</button>
-                    <button className={styles.actionBtn}>Forward</button>
-                    <button className={styles.actionBtn}>Delete</button>
+              <div className="flex flex-col h-full">
+                
+                {/* Mobile detail header back button */}
+                <div className="flex items-center gap-4 px-6 py-4 border-b border-white/5">
+                  <button 
+                    className="md:hidden text-emerald-400 mr-2 cursor-pointer"
+                    onClick={() => setMobileView("list")}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="19" y1="12" x2="5" y2="12" />
+                      <polyline points="12 19 5 12 12 5" />
+                    </svg>
+                  </button>
+                  <div className="flex gap-2">
+                    <button className="bg-[#0b0a09] border border-white/5 text-[#ededed] px-3 py-1.5 rounded-md text-xs hover:border-emerald-500 hover:text-emerald-400 cursor-pointer">
+                      Reply
+                    </button>
+                    <button className="bg-[#0b0a09] border border-white/5 text-[#ededed] px-3 py-1.5 rounded-md text-xs hover:border-emerald-500 hover:text-emerald-400 cursor-pointer">
+                      Forward
+                    </button>
+                    <button className="bg-[#0b0a09] border border-white/5 text-[#ededed] px-3 py-1.5 rounded-md text-xs hover:border-red-500 hover:text-red-400 cursor-pointer">
+                      Delete
+                    </button>
                   </div>
-                  <h2 className={styles.detailSubject}>{selectedEmail.subject}</h2>
-                  <div className={styles.senderMeta}>
+                </div>
+
+                <div className="p-6 flex-1">
+                  <h2 className="text-lg font-bold mb-4 text-[#ededed] leading-snug">{selectedEmail.subject}</h2>
+                  <div className="flex justify-between items-center text-xs mb-6 border-b border-white/5 pb-4">
                     <div>
-                      <strong>{selectedEmail.senderName}</strong>{" "}
-                      <span className={styles.senderAddress}>&lt;{selectedEmail.sender}&gt;</span>
+                      <strong className="text-[#ededed]">{selectedEmail.senderName}</strong>{" "}
+                      <span className="text-[#a3a3a3]">&lt;{selectedEmail.sender}&gt;</span>
                     </div>
-                    <div className={styles.emailTime}>{selectedEmail.time}</div>
+                    <span className="font-mono text-[#a3a3a3]">{selectedEmail.time}</span>
+                  </div>
+                  <div className="text-sm leading-relaxed text-[#ededed] whitespace-pre-wrap">
+                    {selectedEmail.body}
                   </div>
                 </div>
-                <div className={styles.detailBody}>
-                  {selectedEmail.body}
-                </div>
-                <div style={{ padding: "0 24px 24px", borderTop: "1px solid var(--border-color)", marginTop: "auto" }}>
-                  <h4 style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-secondary)", margin: "16px 0 8px" }}>
+
+                <div className="p-6 border-t border-white/5 bg-[#0b0a09]/50 mt-auto">
+                  <h4 className="text-[10px] font-mono text-[#a3a3a3] uppercase tracking-wider mb-2">
                     DECRYPTED ENVELOPE METADATA (TMP SPEC)
                   </h4>
-                  <pre className={styles.badgeMono} style={{ whiteSpace: "pre-wrap" }}>
+                  <pre className="font-mono text-[10px] bg-white/5 border border-white/5 p-3 rounded-lg text-emerald-400 overflow-x-auto whitespace-pre">
                     {JSON.stringify(
                       {
                         protocol_version: selectedEmail.protocolVersion,
@@ -342,9 +399,9 @@ export default function Home() {
                     )}
                   </pre>
                 </div>
-              </>
+              </div>
             ) : (
-              <div className={styles.detailPlaceholder}>
+              <div className="flex-1 flex flex-col items-center justify-center text-[#a3a3a3] text-sm gap-4 p-10 text-center">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 16v-4" />
@@ -357,42 +414,116 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Mobile Bottom Navbar */}
+      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#161412] border-t border-white/5 z-40 justify-around items-center px-4">
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[10px] cursor-pointer ${
+            activeFolder === "inbox" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => handleSelectFolder("inbox")}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+          </svg>
+          <span>Inbox</span>
+        </button>
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[10px] cursor-pointer ${
+            activeFolder === "sent" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => handleSelectFolder("sent")}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+          <span>Sent</span>
+        </button>
+        <button 
+          className="flex flex-col items-center justify-center w-10 h-10 bg-emerald-500 text-black rounded-full shadow-[0_0_12px_rgba(16,185,129,0.4)] cursor-pointer"
+          onClick={() => setIsComposeOpen(true)}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[10px] cursor-pointer ${
+            activeFolder === "drafts" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => handleSelectFolder("drafts")}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+          <span>Drafts</span>
+        </button>
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[10px] cursor-pointer ${
+            isConnectDrawerOpen ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => setIsConnectDrawerOpen(true)}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+          <span>Vault</span>
+        </button>
+      </nav>
+
       {/* Connection Drawer Overlay */}
       {isConnectDrawerOpen && (
-        <div className={styles.drawerOverlay} onClick={() => setIsConnectDrawerOpen(false)} />
+        <div 
+          className="fixed inset-0 bg-black/70 backdrop-blur-[4px] z-[999] transition-opacity" 
+          onClick={() => setIsConnectDrawerOpen(false)} 
+        />
       )}
 
-      {/* Connection Drawer Sheet */}
-      <div className={`${styles.drawer} ${isConnectDrawerOpen ? styles.drawerOpen : ""}`}>
-        <div className={styles.drawerHeader}>
-          <span className={styles.drawerTitle}>Connection settings</span>
-          <button className={styles.closeBtn} onClick={() => setIsConnectDrawerOpen(false)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      {/* Connection Drawer Sheet (Fixed to bottom, max height 75vh) */}
+      <div className={`fixed bottom-0 left-0 right-0 bg-[#161412] border-t border-[#34322f] rounded-t-2xl z-[1000] transition-transform duration-300 transform flex flex-col max-h-[75vh] ${
+        isConnectDrawerOpen ? "translate-y-0 shadow-[0_-12px_36px_rgba(0,0,0,0.5),_0_16px_48px_rgba(0,0,0,0.7)]" : "translate-y-full"
+      }`}>
+        <div className="flex justify-between items-center p-5 border-b border-white/5">
+          <span className="font-mono font-bold text-xs uppercase tracking-wider text-emerald-400">Vault Configuration</span>
+          <button className="text-[#a3a3a3] hover:text-[#ededed] p-1 cursor-pointer" onClick={() => setIsConnectDrawerOpen(false)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
 
-        <div className={styles.drawerContent}>
+        <div className="p-6 overflow-y-auto flex-1">
           {credentials.authMethod !== "None" ? (
-            <div className={styles.nestedCard}>
-              <div className={styles.cardTitle}>Active Client Vault Profile</div>
-              <div className={styles.formGroup}>
-                <span className={styles.formLabel}>Local Identity Address</span>
-                <div className={styles.badgeMono}>{credentials.alias}@{credentials.domain}</div>
+            <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5">
+              <div className="text-xs font-semibold text-[#ededed] mb-4">Active Client Vault Profile</div>
+              
+              <div className="flex flex-col gap-1 mb-4">
+                <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">Identity Address</span>
+                <div className="font-mono text-xs bg-white/5 border border-white/5 p-2 rounded text-emerald-400">
+                  {credentials.alias}@{credentials.domain}
+                </div>
               </div>
-              <div className={styles.formGroup}>
-                <span className={styles.formLabel}>SEC256K1 PUBLIC ADDRESS (npub)</span>
-                <div className={styles.badgeMono}>{credentials.npub}</div>
+
+              <div className="flex flex-col gap-1 mb-4">
+                <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">Secp256k1 Public Key (npub)</span>
+                <div className="font-mono text-xs bg-white/5 border border-white/5 p-2 rounded text-emerald-400 break-all">
+                  {credentials.npub}
+                </div>
               </div>
-              <div className={styles.formGroup}>
-                <span className={styles.formLabel}>Authentication Method</span>
-                <div className={styles.badgeMono} style={{ color: "var(--accent)" }}>{credentials.authMethod}</div>
+
+              <div className="flex flex-col gap-1 mb-6">
+                <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">Auth Method</span>
+                <div className="font-mono text-xs bg-emerald-500/10 border border-emerald-500/20 p-2 rounded text-emerald-400 font-semibold">
+                  {credentials.authMethod}
+                </div>
               </div>
+
               <button
-                className={styles.btnPrimary}
-                style={{ width: "100%", background: "#ef4444", color: "#fff", marginTop: 8 }}
+                className="w-full bg-red-600 text-white font-semibold py-3 px-4 rounded-lg text-sm hover:bg-red-500 transition-colors cursor-pointer"
                 onClick={handleResetAuth}
               >
                 DISCONNECT VAULT
@@ -401,40 +532,38 @@ export default function Home() {
           ) : (
             <>
               {authStep === "choose" && (
-                <div className={styles.nestedCard}>
-                  <div className={styles.cardTitle}>Select Vault Decryption Pathway</div>
-                  <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
-                    TMP vaults store your private keys locally and require edge decryption. Choose a secure pathway:
+                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5">
+                  <div className="text-xs font-semibold text-[#ededed] mb-2">Select Vault Decryption Pathway</div>
+                  <p className="text-xs text-[#a3a3a3] mb-5">
+                    TMP vaults encrypt operational master private keys locally. Select a secure mechanism to decrypt:
                   </p>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  
+                  <div className="flex flex-col gap-3">
                     <button
-                      className={styles.actionBtn}
-                      style={{ textAlign: "left", display: "flex", flexDirection: "column", gap: 4, padding: 12 }}
+                      className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-lg cursor-pointer transition-colors flex flex-col gap-1"
                       onClick={() => setAuthStep("passkey")}
                     >
-                      <strong>Pathway 1: WebAuthn Passkey (Recommended)</strong>
-                      <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                        Secure hardware-bound biometric authentication via internal secure enclave
+                      <strong className="text-xs text-[#ededed]">Pathway 1: WebAuthn Passkey (Hardware)</strong>
+                      <span className="text-[10px] text-[#a3a3a3]">
+                        Stable, high-entropy key derived directly from browser biometric/hardware enclave
                       </span>
                     </button>
                     <button
-                      className={styles.actionBtn}
-                      style={{ textAlign: "left", display: "flex", flexDirection: "column", gap: 4, padding: 12 }}
+                      className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-lg cursor-pointer transition-colors flex flex-col gap-1"
                       onClick={() => setAuthStep("password")}
                     >
-                      <strong>Pathway 2: Client-Side Password</strong>
-                      <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                        Argon2id WASM key derivation function calculated purely at the edge
+                      <strong className="text-xs text-[#ededed]">Pathway 2: Client-Side Password</strong>
+                      <span className="text-[10px] text-[#a3a3a3]">
+                        Argon2id client hash computation executed locally inside background WASM threads
                       </span>
                     </button>
                     <button
-                      className={styles.actionBtn}
-                      style={{ textAlign: "left", display: "flex", flexDirection: "column", gap: 4, padding: 12 }}
+                      className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-lg cursor-pointer transition-colors flex flex-col gap-1"
                       onClick={() => setAuthStep("mnemonic")}
                     >
-                      <strong>Pathway 3: Recovery Mnemonic</strong>
-                      <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                        12 or 24 word mnemonic seed fallback verification
+                      <strong className="text-xs text-[#ededed]">Pathway 3: Recovery Mnemonic</strong>
+                      <span className="text-[10px] text-[#a3a3a3]">
+                        Import account using raw BIP-39 mnemonic seed fallback entropy reconstruction
                       </span>
                     </button>
                   </div>
@@ -442,37 +571,38 @@ export default function Home() {
               )}
 
               {authStep === "passkey" && (
-                <div className={styles.nestedCard}>
-                  <div className={styles.cardTitle}>WebAuthn Passkey Hydration</div>
-                  <div className={styles.formGroup}>
-                    <span className={styles.formLabel}>User Alias</span>
+                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5">
+                  <div className="text-xs font-semibold text-[#ededed] mb-4">WebAuthn Hardware Authentication</div>
+                  
+                  <div className="flex flex-col gap-2 mb-4">
+                    <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">User Alias</span>
                     <input
                       type="text"
-                      className={styles.textInput}
+                      className="bg-[#161412] border border-white/5 rounded-md p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
                       value={tempAlias}
                       onChange={(e) => setTempAlias(e.target.value)}
                     />
                   </div>
-                  <div className={styles.formGroup}>
-                    <span className={styles.formLabel}>Domain Pointer</span>
+
+                  <div className="flex flex-col gap-2 mb-6">
+                    <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">Verified DNS Domain</span>
                     <input
                       type="text"
-                      className={styles.textInput}
+                      className="bg-[#161412] border border-white/5 rounded-md p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
                       value={tempDomain}
                       onChange={(e) => setTempDomain(e.target.value)}
                     />
                   </div>
-                  <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+
+                  <div className="flex gap-3">
                     <button
-                      className={styles.actionBtn}
-                      style={{ flex: 1 }}
+                      className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 cursor-pointer"
                       onClick={() => setAuthStep("choose")}
                     >
                       BACK
                     </button>
                     <button
-                      className={styles.btnPrimary}
-                      style={{ flex: 2 }}
+                      className="flex-2 bg-emerald-500 text-black py-3 rounded-lg text-xs font-bold hover:shadow-[0_0_12px_rgba(16,185,129,0.3)] cursor-pointer"
                       onClick={handleConnectSetup}
                     >
                       AUTHENTICATE HARDWARE
@@ -482,38 +612,39 @@ export default function Home() {
               )}
 
               {authStep === "password" && (
-                <div className={styles.nestedCard}>
-                  <div className={styles.cardTitle}>Argon2id Password Derivation</div>
-                  <div className={styles.formGroup}>
-                    <span className={styles.formLabel}>User Alias</span>
+                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5">
+                  <div className="text-xs font-semibold text-[#ededed] mb-4">Argon2id Key Derivation</div>
+                  
+                  <div className="flex flex-col gap-2 mb-4">
+                    <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">User Alias</span>
                     <input
                       type="text"
-                      className={styles.textInput}
+                      className="bg-[#161412] border border-white/5 rounded-md p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
                       value={tempAlias}
                       onChange={(e) => setTempAlias(e.target.value)}
                     />
                   </div>
-                  <div className={styles.formGroup}>
-                    <span className={styles.formLabel}>Decryption Password</span>
+
+                  <div className="flex flex-col gap-2 mb-6">
+                    <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">Decryption Password</span>
                     <input
                       type="password"
-                      className={styles.textInput}
+                      className="bg-[#161412] border border-white/5 rounded-md p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
                       placeholder="••••••••••••"
                       value={passwordInput}
                       onChange={(e) => setPasswordInput(e.target.value)}
                     />
                   </div>
-                  <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+
+                  <div className="flex gap-3">
                     <button
-                      className={styles.actionBtn}
-                      style={{ flex: 1 }}
+                      className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 cursor-pointer"
                       onClick={() => setAuthStep("choose")}
                     >
                       BACK
                     </button>
                     <button
-                      className={styles.btnPrimary}
-                      style={{ flex: 2 }}
+                      className="flex-2 bg-emerald-500 text-black py-3 rounded-lg text-xs font-bold hover:shadow-[0_0_12px_rgba(16,185,129,0.3)] cursor-pointer"
                       onClick={handleConnectSetup}
                     >
                       DERIVE KEY
@@ -523,39 +654,39 @@ export default function Home() {
               )}
 
               {authStep === "mnemonic" && (
-                <div className={styles.nestedCard}>
-                  <div className={styles.cardTitle}>Mnemonic Phrase Verification</div>
-                  <div className={styles.formGroup}>
-                    <span className={styles.formLabel}>User Alias</span>
+                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5">
+                  <div className="text-xs font-semibold text-[#ededed] mb-4">Mnemonic Phrase Verification</div>
+                  
+                  <div className="flex flex-col gap-2 mb-4">
+                    <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">User Alias</span>
                     <input
                       type="text"
-                      className={styles.textInput}
+                      className="bg-[#161412] border border-white/5 rounded-md p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
                       value={tempAlias}
                       onChange={(e) => setTempAlias(e.target.value)}
                     />
                   </div>
-                  <div className={styles.formGroup}>
-                    <span className={styles.formLabel}>12/24 Word Mnemonic Seed</span>
+
+                  <div className="flex flex-col gap-2 mb-6">
+                    <span className="font-mono text-[10px] text-[#a3a3a3] uppercase">12/24 Word Mnemonic Seed</span>
                     <textarea
-                      className={styles.textInput}
+                      className="bg-[#161412] border border-white/5 rounded-md p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50 resize-none"
                       rows={3}
                       placeholder="word1 word2 word3..."
                       value={mnemonicInput}
                       onChange={(e) => setMnemonicInput(e.target.value)}
-                      style={{ resize: "none", fontFamily: "var(--font-mono)" }}
                     />
                   </div>
-                  <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+
+                  <div className="flex gap-3">
                     <button
-                      className={styles.actionBtn}
-                      style={{ flex: 1 }}
+                      className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 cursor-pointer"
                       onClick={() => setAuthStep("choose")}
                     >
                       BACK
                     </button>
                     <button
-                      className={styles.btnPrimary}
-                      style={{ flex: 2 }}
+                      className="flex-2 bg-emerald-500 text-black py-3 rounded-lg text-xs font-bold hover:shadow-[0_0_12px_rgba(16,185,129,0.3)] cursor-pointer"
                       onClick={handleConnectSetup}
                     >
                       RECOVER VAULT
@@ -568,56 +699,67 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Floating Compose Panel */}
+      {/* Floating Compose Panel (Drawer style on mobile, bottom right card on desktop) */}
       {isComposeOpen && (
-        <div className={styles.composer}>
-          <div className={styles.composerHeader}>
-            <span className={styles.composerTitle}>New Message</span>
-            <button className={styles.closeBtn} onClick={() => setIsComposeOpen(false)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-          <form className={styles.composerForm} onSubmit={handleSendEmail}>
-            <input
-              type="text"
-              placeholder="To (username@domain.com or npub)"
-              className={styles.composerInput}
-              value={composeTo}
-              onChange={(e) => setComposeTo(e.target.value)}
-              required
-            />
-            <input
-              type="text"
-              placeholder="Subject"
-              className={styles.composerInput}
-              value={composeSubject}
-              onChange={(e) => setComposeSubject(e.target.value)}
-            />
-            <textarea
-              placeholder="Write your secure email..."
-              className={styles.composerTextarea}
-              value={composeBody}
-              onChange={(e) => setComposeBody(e.target.value)}
-              required
-            />
-            <div className={styles.composerActions}>
-              <span className={styles.badgeMono} style={{ fontSize: 10 }}>
-                MODE: STRICT BINARY PROTOBUF
-              </span>
-              <button type="submit" className={styles.sendBtn}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="22" y1="2" x2="11" y2="13" />
-                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        <>
+          {/* Mobile compose backdrop */}
+          <div className="fixed inset-0 bg-black/75 backdrop-blur-[2px] z-50 md:hidden" onClick={() => setIsComposeOpen(false)} />
+          
+          <div className="fixed inset-x-0 bottom-0 md:inset-auto md:bottom-6 md:right-6 md:w-[500px] h-[90vh] md:h-[480px] bg-[#161412] border-t md:border border-[#34322f] rounded-t-2xl md:rounded-xl shadow-2xl flex flex-col z-50 overflow-hidden">
+            <div className="bg-[#0b0a09] px-5 py-4 flex justify-between items-center border-b border-white/5">
+              <span className="text-xs font-bold text-[#ededed]">New Secure Message</span>
+              <button className="text-[#a3a3a3] hover:text-[#ededed] p-1 cursor-pointer" onClick={() => setIsComposeOpen(false)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
-                <span>SEND EMAIL</span>
               </button>
             </div>
-          </form>
-        </div>
+            
+            <form className="flex-1 flex flex-col p-5 gap-3" onSubmit={handleSendEmail}>
+              <input
+                type="text"
+                placeholder="To (username@domain.com or npub)"
+                className="bg-[#0b0a09] border border-white/5 rounded-lg p-3 text-xs text-[#ededed] outline-none focus:border-emerald-500/50"
+                value={composeTo}
+                onChange={(e) => setComposeTo(e.target.value)}
+                required
+              />
+              <input
+                type="text"
+                placeholder="Subject"
+                className="bg-[#0b0a09] border border-white/5 rounded-lg p-3 text-xs text-[#ededed] outline-none focus:border-emerald-500/50"
+                value={composeSubject}
+                onChange={(e) => setComposeSubject(e.target.value)}
+              />
+              <textarea
+                placeholder="Write your secure email..."
+                className="flex-1 bg-[#0b0a09] border border-white/5 rounded-lg p-3 text-xs text-[#ededed] outline-none focus:border-emerald-500/50 resize-none leading-relaxed"
+                value={composeBody}
+                onChange={(e) => setComposeBody(e.target.value)}
+                required
+              />
+              
+              <div className="flex justify-between items-center pt-2">
+                <span className="font-mono text-[9px] text-[#a3a3a3] bg-white/5 px-2 py-1 rounded border border-white/5 uppercase">
+                  Protobuf binary payload
+                </span>
+                <button 
+                  type="submit" 
+                  className="bg-emerald-500 text-black font-semibold px-5 py-2.5 rounded-lg text-xs hover:shadow-[0_0_12px_rgba(16,185,129,0.3)] transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="22" y1="2" x2="11" y2="13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                  <span>SEND EMAIL</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </>
       )}
+
     </div>
   );
 }
