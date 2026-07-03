@@ -4,7 +4,7 @@
   "private": true,
   "author": "nathfavour",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H localhost -p ${PORT:-5003}",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
