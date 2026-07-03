@@ -4,6 +4,6 @@ const nextConfig = {
   turbopack: {
     root: __dirname,
   },
-} as any;
+} as unknown as NextConfig;
 
 export default nextConfig;
