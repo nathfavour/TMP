@@ -3,11 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import {
   bytesToNpub,
+  bytesToNsec,
   getPubkeyFromPrivkey,
   encryptVault,
   decryptVault,
   deriveKeyFromPassword,
   bytesToHex,
+  hexToBytes,
   type EncryptedVault
 } from "@/lib/tmp/crypto";
 import { resolveIdentifier } from "@/lib/tmp/resolver";
@@ -400,7 +402,7 @@ export default function Home() {
           
           const newEmail: Email = {
             id: event.id,
-            sender: isSentByMe ? `${credentials.alias}@${credentials.domain}` : `npub1${event.pubkey.substring(0, 8)}...`,
+            sender: isSentByMe ? credentials.alias : bytesToNpub(hexToBytes(event.pubkey)),
             senderName: isSentByMe ? "Me" : `User ${event.pubkey.substring(0, 6)}`,
             subject: mail.subject || "(No Subject)",
             body: mail.body_plaintext,
@@ -1150,7 +1152,7 @@ export default function Home() {
 
       const newEmail: Email = {
         id: signedEvent.id,
-        sender: `${credentials.alias}@${credentials.domain}`,
+        sender: credentials.alias,
         senderName: "Me",
         subject: composeSubject || "(No Subject)",
         body: composeBody,
@@ -1344,7 +1346,7 @@ export default function Home() {
               )}
 
               {/* Password input shown if signing in/signup and method is password */}
-              {!credentials.alias && isAliasTaken !== null && loginMethod === "password" && (
+              {((!credentials.alias && isAliasTaken !== null && loginMethod === "password") || (credentials.alias && credentials.authMethod === "Password")) && (
                 <div className="flex flex-col gap-1.5 mt-1.5 animate-fadeIn">
                   <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
                     {isAliasTaken === false ? "Set Secure Password" : "Password"}
@@ -1362,7 +1364,7 @@ export default function Home() {
               )}
 
               {/* Mnemonic phrase input shown if signing in/signup and method is recovery phrase */}
-              {!credentials.alias && loginMethod === "mnemonic" && (
+              {((!credentials.alias && loginMethod === "mnemonic") || (credentials.alias && credentials.authMethod === "Mnemonic")) && (
                 <div className="flex flex-col gap-1.5 mt-1.5 animate-fadeIn">
                   <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
                     Recovery Phrase (12 Words)
@@ -1399,6 +1401,23 @@ export default function Home() {
                     } else if (loginMethod === "mnemonic") {
                       if (!mnemonicInput) {
                         setErrorMsg(isAliasTaken === false ? "Recovery phrase is required to import" : "Recovery phrase is required to sign in");
+                        return;
+                      }
+                      handleConnectSetup("mnemonic");
+                    } else {
+                      handleConnectSetup("passkey");
+                    }
+                  } else {
+                    // Unlock flow with registered authMethod
+                    if (credentials.authMethod === "Password") {
+                      if (!passwordInput) {
+                        setErrorMsg("Password is required to unlock");
+                        return;
+                      }
+                      handleConnectSetup("password");
+                    } else if (credentials.authMethod === "Mnemonic") {
+                      if (!mnemonicInput) {
+                        setErrorMsg("Recovery phrase is required to unlock");
                         return;
                       }
                       handleConnectSetup("mnemonic");
@@ -1757,7 +1776,7 @@ export default function Home() {
                         {JSON.stringify(
                           {
                             protocol_version: selectedEmail.protocolVersion,
-                            sender_pubkey: selectedEmail.rawEvent.pubkey,
+                            sender_public_key_npub: bytesToNpub(hexToBytes(selectedEmail.rawEvent.pubkey)),
                             envelope_signature: selectedEmail.rawEvent.sig.substring(0, 20) + "...",
                             payload_encrypted: selectedEmail.encrypted,
                             local_hydration_status: "verified_dns_match",
@@ -1842,10 +1861,17 @@ export default function Home() {
                   </div>
                 )}
 
-                <div className="flex flex-col gap-1.5 mb-4">
+                 <div className="flex flex-col gap-1.5 mb-4">
                   <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">SECP256K1 PUBLIC ADDRESS (npub)</span>
                   <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400 break-all">
                     {credentials.npub}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5 mb-4">
+                  <span className="font-mono text-[9px] text-[#a3a3a3] uppercase text-red-400">SECP256K1 PRIVATE KEY (nsec)</span>
+                  <div className="font-mono text-xs bg-[#161412] border border-red-500/20 p-2.5 rounded-lg text-red-400 break-all select-all">
+                    {activePrivKey ? bytesToNsec(activePrivKey) : "Locked / Unavailable"}
                   </div>
                 </div>
 
