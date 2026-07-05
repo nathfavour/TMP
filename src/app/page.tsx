@@ -475,7 +475,7 @@ export default function Home() {
       setIsLoading(true);
       setErrorMsg("");
 
-      const resolved = await resolveIdentifier(composeTo);
+      const resolved = await resolveIdentifier(composeTo, credentials.domain);
       console.log("Resolved target:", resolved);
 
       const envelope = buildEnvelope({

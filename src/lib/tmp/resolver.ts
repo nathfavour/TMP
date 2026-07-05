@@ -13,8 +13,14 @@ export interface TendonJson {
  * Resolves a Tendon user identifier (username@domain.com or npub...)
  * to a hex public key string (32 bytes).
  */
-export async function resolveIdentifier(identifier: string): Promise<{ npub: string; hex: string; source: string }> {
-  const clean = identifier.trim();
+export async function resolveIdentifier(identifier: string, defaultDomain?: string): Promise<{ npub: string; hex: string; source: string }> {
+  let clean = identifier.trim();
+
+  // If it's a plain username without "@", suffix it with defaultDomain or window.location.host
+  if (!clean.startsWith("npub1") && !clean.includes("@")) {
+    const domain = defaultDomain || (typeof window !== "undefined" ? window.location.host : "localhost:5003");
+    clean = `${clean}@${domain}`;
+  }
 
   // If it's an npub
   if (clean.startsWith("npub1")) {
