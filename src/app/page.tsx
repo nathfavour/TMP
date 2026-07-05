@@ -122,7 +122,7 @@ export default function Home() {
 
   // Drawer & form interaction states
   const [tempAlias, setTempAlias] = useState("");
-  const [tempDomain, setTempDomain] = useState(() => {
+  const [tempDomain] = useState(() => {
     if (typeof window !== "undefined") {
       return window.location.host;
     }
@@ -132,7 +132,7 @@ export default function Home() {
   const [passwordInput, setPasswordInput] = useState("");
   const [mnemonicInput, setMnemonicInput] = useState("");
   const [generatedMnemonic, setGeneratedMnemonic] = useState("");
-  const [passkeyNameInput, setPasskeyNameInput] = useState("");
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -314,12 +314,11 @@ export default function Home() {
           accountVault.passkeys.push({ 
             credentialIdHex, 
             vault,
-            name: passkeyNameInput.trim() || `Passkey 1`,
+            name: `Passkey-${Math.random().toString(36).substring(2, 7)}`,
             createdDomain: window.location.host,
             createdAt: Date.now()
           });
           localStorage.setItem(vaultKey, JSON.stringify(accountVault));
-          setPasskeyNameInput("");
         }
       } else if (activeStep === "password") {
         methodUsed = "Password";
@@ -393,14 +392,13 @@ export default function Home() {
       accountVault.passkeys.push({ 
         credentialIdHex, 
         vault,
-        name: passkeyNameInput.trim() || `Passkey ${accountVault.passkeys.length + 1}`,
+        name: `Passkey-${Math.random().toString(36).substring(2, 7)}`,
         createdDomain: window.location.host,
         createdAt: Date.now()
       });
       
       localStorage.setItem(vaultKey, JSON.stringify(accountVault));
       setSuccessMsg("Additional passkey registered successfully!");
-      setPasskeyNameInput("");
       loadActiveVaultConfig();
     } catch (e) {
       setErrorMsg((e as Error).message || "Failed to add passkey");
@@ -610,9 +608,9 @@ export default function Home() {
 
             {authStep === "choose" ? (
               <div className="flex flex-col gap-4">
-                <div className="flex flex-col md:flex-row gap-3">
-                  <div className="flex flex-col gap-1.5 flex-1">
-                    <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Choose Username</label>
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Username</label>
                     <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
                       <input
                         type="text"
@@ -623,59 +621,26 @@ export default function Home() {
                       />
                     </div>
                   </div>
-                  <div className="flex flex-col gap-1.5 flex-1">
-                    <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Verified DNS Domain</label>
-                    <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
-                      <span className="text-xs text-neutral-500 font-mono mr-1">@</span>
-                      <input
-                        type="text"
-                        placeholder="e.g. tendon.org"
-                        className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
-                        value={tempDomain}
-                        onChange={(e) => setTempDomain(e.target.value)}
-                      />
-                    </div>
-                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-                  <button
-                    className="flex flex-col items-center justify-center gap-2 p-4 bg-[#0b0a09]/50 hover:bg-[#0b0a09] border border-white/5 hover:border-emerald-500/50 rounded-xl cursor-pointer hover:scale-[1.01] transition-all group"
-                    onClick={() => {
-                      if (!tempAlias.trim()) {
-                        setErrorMsg("Please enter a username alias first");
-                        return;
-                      }
-                      setAuthStep("passkey");
-                    }}
-                  >
-                    <svg className="text-emerald-500/80 group-hover:text-emerald-400 transition-colors" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 2a5 5 0 0 0-5 5v4H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zM9 7a3 3 0 0 1 6 0v4H9V7zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
-                    </svg>
-                    <span className="text-xs font-semibold text-[#ededed]">Pathway 1: Passkey</span>
-                    <span className="text-[9px] text-neutral-500 text-center">Hardware secure enclave</span>
-                  </button>
+                <button
+                  className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
+                  onClick={() => {
+                    if (!tempAlias.trim()) {
+                      setErrorMsg("Please enter a username alias first");
+                      return;
+                    }
+                    handleConnectSetup("passkey");
+                  }}
+                  disabled={isLoading}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M12 2a5 5 0 0 0-5 5v4H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zM9 7a3 3 0 0 1 6 0v4H9V7zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
+                  </svg>
+                  <span>{isLoading ? "CONNECTING..." : "CONNECT WITH PASSKEY"}</span>
+                </button>
 
-                  <button
-                    className="flex flex-col items-center justify-center gap-2 p-4 bg-[#0b0a09]/50 hover:bg-[#0b0a09] border border-white/5 hover:border-emerald-500/50 rounded-xl cursor-pointer hover:scale-[1.01] transition-all group"
-                    onClick={() => {
-                      if (!tempAlias.trim()) {
-                        setErrorMsg("Please enter a username alias first");
-                        return;
-                      }
-                      setAuthStep("password");
-                    }}
-                  >
-                    <svg className="text-emerald-500/80 group-hover:text-emerald-400 transition-colors" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                    </svg>
-                    <span className="text-xs font-semibold text-[#ededed]">Pathway 2: Password</span>
-                    <span className="text-[9px] text-neutral-500 text-center">Argon2id client key</span>
-                  </button>
-                </div>
-
-                <div className="flex justify-center mt-6">
+                <div className="flex justify-center mt-4">
                   <button
                     className="text-xs text-neutral-500 hover:text-emerald-400 font-mono transition-colors"
                     onClick={() => {
@@ -727,20 +692,8 @@ export default function Home() {
                   )}
 
                   {authStep === "passkey" && (
-                    <div className="flex flex-col gap-3">
-                      <div className="text-xs text-neutral-400 leading-relaxed mb-2">
-                        Specify a name for this passkey and click the button below to initialize biometric/security key approval. Your browser will prompt you to create or approve a passkey.
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-wider">Passkey Name (e.g. Work Laptop)</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Main Passkey"
-                          className="w-full bg-[#161412] border border-white/15 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                          value={passkeyNameInput}
-                          onChange={(e) => setPasskeyNameInput(e.target.value)}
-                        />
-                      </div>
+                    <div className="text-xs text-neutral-400 leading-relaxed mb-2">
+                      Click the button below to initialize biometric/security key approval. Your browser will prompt you to create or approve a passkey.
                     </div>
                   )}
                 </div>
@@ -758,7 +711,7 @@ export default function Home() {
                   </button>
                   <button
                     className="flex-2 bg-emerald-500 text-black py-3 rounded-xl text-xs font-bold hover:shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
-                    onClick={handleConnectSetup}
+                    onClick={() => handleConnectSetup()}
                     disabled={isLoading}
                   >
                     {isLoading ? "AUTHENTICATING..." : authStep === "passkey" ? "AUTHENTICATE PASSKEY" : "INITIALIZE VAULT"}
@@ -1144,26 +1097,17 @@ export default function Home() {
                 {/* Register another Passkey */}
                 <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
                   <span className="text-[10px] text-neutral-400">Add backup passkeys or register a secondary biometric authenticator:</span>
-                  <div className="flex flex-col gap-2">
-                    <input
-                      type="text"
-                      placeholder="Passkey name (e.g. YubiKey)"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] outline-none focus:border-emerald-500/50 font-mono"
-                      value={passkeyNameInput}
-                      onChange={(e) => setPasskeyNameInput(e.target.value)}
-                    />
-                    <button
-                      className="bg-[#161412] border border-white/5 text-[#ededed] py-2.5 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                      onClick={handleAddPasskey}
-                      disabled={isLoading}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <line x1="12" y1="5" x2="12" y2="19" />
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
-                      <span>Register Additional Passkey</span>
-                    </button>
-                  </div>
+                  <button
+                    className="bg-[#161412] border border-white/5 text-[#ededed] py-2.5 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                    onClick={handleAddPasskey}
+                    disabled={isLoading}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    <span>Register Additional Passkey</span>
+                  </button>
                 </div>
 
                 {/* Set Password Unlock */}
