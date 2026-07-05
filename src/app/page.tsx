@@ -696,16 +696,14 @@ export default function Home() {
           accountVault = { alias, domain, passkeys: [] };
         }
 
-        // If we are registering (minting) this recovery phrase as a new username:
-        if (isAliasTaken === false) {
-          const privKeyHash = new Uint8Array(sha256(privateKeyBytes).slice(0, 32));
-          const mSalt = crypto.getRandomValues(new Uint8Array(16));
-          const encMnemonic = await encryptVault(new TextEncoder().encode(mnemonicInput), privKeyHash, mSalt);
-          accountVault.encryptedMnemonic = encMnemonic;
-          
-          localStorage.setItem(vaultKey, JSON.stringify(accountVault));
-          await publishVaultToRelays(accountVault, privateKeyBytes);
-        }
+        // Always encrypt and cache the inputted recovery phrase inside the vault container
+        const privKeyHash = new Uint8Array(sha256(privateKeyBytes).slice(0, 32));
+        const mSalt = crypto.getRandomValues(new Uint8Array(16));
+        const encMnemonic = await encryptVault(new TextEncoder().encode(mnemonicInput), privKeyHash, mSalt);
+        accountVault.encryptedMnemonic = encMnemonic;
+        
+        localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+        await publishVaultToRelays(accountVault, privateKeyBytes);
       } else {
         throw new Error("Invalid authentication pathway selection");
       }
