@@ -166,7 +166,9 @@ export default function Home() {
       try {
         const domain = typeof window !== "undefined" ? window.location.host : "localhost:5003";
         const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
-        const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
+        const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json?t=${Date.now()}`, {
+          headers: { "Cache-Control": "no-cache" }
+        });
         if (response.ok) {
           const data = await response.json();
           if (input.startsWith("npub1")) {
@@ -250,7 +252,9 @@ export default function Home() {
     try {
       const domain = credentials.domain || window.location.host;
       const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
-      const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
+      const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json?t=${Date.now()}`, {
+        headers: { "Cache-Control": "no-cache" }
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.names) {
@@ -412,30 +416,34 @@ export default function Home() {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      const alias = (credentials.alias || resolvedUsername || tempAlias).trim().toLowerCase();
-      const domain = (credentials.domain || tempDomain || "").trim();
-      if (!alias) {
+      let alias = (credentials.alias || resolvedUsername || tempAlias).trim().toLowerCase();
+      let domain = (credentials.domain || tempDomain || "").trim();
+      const activeStep = overrideAuthStep || authStep;
+
+      if (!alias && activeStep !== "mnemonic") {
         throw new Error("Alias must not be empty");
       }
 
       let privateKeyBytes: Uint8Array;
       let methodUsed: typeof credentials.authMethod = "None";
 
-      const vaultKey = domain ? `tendon_account_vault_${alias}@${domain}` : `tendon_account_vault_${alias}`;
+      let vaultKey = domain ? `tendon_account_vault_${alias}@${domain}` : `tendon_account_vault_${alias}`;
       const savedVaultRaw = localStorage.getItem(vaultKey);
       let accountVault: AccountVaultConfig = savedVaultRaw 
         ? JSON.parse(savedVaultRaw) 
         : { alias, domain, passkeys: [] };
 
       // Query Nostr relays if local vault is missing or empty
-      if (!savedVaultRaw || (!accountVault.passwordVault && accountVault.passkeys.length === 0)) {
+      if (alias && (!savedVaultRaw || (!accountVault.passwordVault && accountVault.passkeys.length === 0))) {
         let hexPub = "";
         try {
           if (alias.startsWith("npub1")) {
             const { npubToBytes } = await import("@/lib/tmp/crypto");
             hexPub = bytesToHex(npubToBytes(alias));
           } else if (domain) {
-            const registryResponse = await fetch(`http://${domain}/.well-known/tendon.json`);
+            const registryResponse = await fetch(`http://${domain}/.well-known/tendon.json?t=${new Date().getTime()}`, {
+              headers: { "Cache-Control": "no-cache" }
+            });
             if (registryResponse.ok) {
               const regData = await registryResponse.json();
               const targetEntry = regData.names_v31?.[alias];
@@ -462,8 +470,6 @@ export default function Home() {
           }
         }
       }
-
-      const activeStep = overrideAuthStep || authStep;
 
       if (activeStep === "passkey") {
         methodUsed = "Passkey";
@@ -562,33 +568,74 @@ export default function Home() {
           throw new Error("Mnemonic recovery phrase must not be empty");
         }
         const { deriveKeyFromMnemonic, sha256 } = await import("@/lib/tmp/crypto");
-        
-        // Check if there is an encrypted vault wrapper for mnemonic first
-        if (accountVault.mnemonicVault) {
+        try {
+          privateKeyBytes = deriveKeyFromMnemonic(mnemonicInput);
+        } catch (err) {
+          throw new Error(`Failed to derive key from recovery phrase: ${(err as Error).message}`);
+        }
+
+        const pubKey = getPubkeyFromPrivkey(privateKeyBytes);
+        const derivedNpub = bytesToNpub(pubKey);
+
+        let resolvedAlias = alias;
+        let resolvedDomain = domain;
+
+        if (!resolvedAlias) {
+          const searchDomain = tempDomain || window.location.host;
           try {
-            const seedKey = deriveKeyFromMnemonic(mnemonicInput);
-            privateKeyBytes = await decryptVault(accountVault.mnemonicVault, seedKey);
-          } catch {
-            throw new Error("Incorrect recovery phrase. Decryption of local vault failed.");
-          }
-        } else {
-          // Fall back to direct deterministic derivation
-          try {
-            privateKeyBytes = deriveKeyFromMnemonic(mnemonicInput);
-            
-            // If we are registering (minting) this recovery phrase as a new username:
-            if (isAliasTaken === false) {
-              const privKeyHash = new Uint8Array(sha256(privateKeyBytes).slice(0, 32));
-              const mSalt = crypto.getRandomValues(new Uint8Array(16));
-              const encMnemonic = await encryptVault(new TextEncoder().encode(mnemonicInput), privKeyHash, mSalt);
-              accountVault.encryptedMnemonic = encMnemonic;
-              
-              localStorage.setItem(vaultKey, JSON.stringify(accountVault));
-              await publishVaultToRelays(accountVault, privateKeyBytes);
+            const res = await fetch(`http://${searchDomain}/.well-known/tendon.json?t=${new Date().getTime()}`);
+            if (res.ok) {
+              const regData = await res.json();
+              const v31Records = (regData.names_v31 || {}) as Record<string, { npub: string; signature: string }>;
+              const foundEntry = Object.entries(v31Records).find(
+                ([, entry]) => entry.npub === derivedNpub
+              );
+              if (foundEntry) {
+                resolvedAlias = foundEntry[0];
+                resolvedDomain = searchDomain;
+                accountVault.domainSignature = foundEntry[1].signature;
+                accountVault.domainPubkey = regData.domain_pubkey as string;
+              } else {
+                const fallbackEntry = Object.entries(regData.names || {}).find(
+                  ([, targetNpub]) => targetNpub === derivedNpub
+                );
+                if (fallbackEntry) {
+                  resolvedAlias = fallbackEntry[0];
+                  resolvedDomain = searchDomain;
+                }
+              }
             }
-          } catch (err) {
-            throw new Error(`Failed to derive key from recovery phrase: ${(err as Error).message}`);
+          } catch (e) {
+            console.warn("Could not query directory registry to resolve npub name:", e);
           }
+        }
+
+        if (!resolvedAlias) {
+          resolvedAlias = derivedNpub.substring(0, 15);
+          resolvedDomain = "";
+        }
+
+        alias = resolvedAlias;
+        domain = resolvedDomain;
+        vaultKey = domain ? `tendon_account_vault_${alias}@${domain}` : `tendon_account_vault_${alias}`;
+
+        // Re-hydrate local vault configuration if it exists
+        const savedVaultRaw = localStorage.getItem(vaultKey);
+        if (savedVaultRaw) {
+          accountVault = JSON.parse(savedVaultRaw);
+        } else {
+          accountVault = { alias, domain, passkeys: [] };
+        }
+
+        // If we are registering (minting) this recovery phrase as a new username:
+        if (isAliasTaken === false) {
+          const privKeyHash = new Uint8Array(sha256(privateKeyBytes).slice(0, 32));
+          const mSalt = crypto.getRandomValues(new Uint8Array(16));
+          const encMnemonic = await encryptVault(new TextEncoder().encode(mnemonicInput), privKeyHash, mSalt);
+          accountVault.encryptedMnemonic = encMnemonic;
+          
+          localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+          await publishVaultToRelays(accountVault, privateKeyBytes);
         }
       } else {
         throw new Error("Invalid authentication pathway selection");
@@ -1168,7 +1215,7 @@ export default function Home() {
             )}
 
             <div className="flex flex-col gap-4">
-              {!credentials.alias && (
+              {!credentials.alias && loginMethod !== "mnemonic" && (
                 <div className="flex flex-col gap-3">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Username</label>
@@ -1240,10 +1287,10 @@ export default function Home() {
               )}
 
               {/* Mnemonic phrase input shown if signing in/signup and method is recovery phrase */}
-              {!credentials.alias && isAliasTaken !== null && loginMethod === "mnemonic" && (
+              {!credentials.alias && loginMethod === "mnemonic" && (
                 <div className="flex flex-col gap-1.5 mt-1.5 animate-fadeIn">
                   <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
-                    {isAliasTaken === false ? "Enter Phrase to Import" : "Recovery Phrase (12 Words)"}
+                    Recovery Phrase (12 Words)
                   </label>
                   <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
                     <textarea
@@ -1376,7 +1423,9 @@ export default function Home() {
                 onClick={() => setIsConnectDrawerOpen(true)}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>{credentials.alias}@{credentials.domain}</span>
+                <span title={credentials.domain ? `Verified by ${credentials.domain}` : "Domainless account"}>
+                  {credentials.alias}
+                </span>
                 {isVerifiedIdentity && (
                   <svg className="w-3 h-3 text-emerald-400 fill-emerald-400" viewBox="0 0 24 24">
                     <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
@@ -1674,11 +1723,23 @@ export default function Home() {
                 <div className="text-xs font-semibold text-[#ededed] mb-4">Active Key Decryption Settings</div>
                 
                 <div className="flex flex-col gap-1.5 mb-4">
-                  <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Identity Domain Endpoint</span>
-                  <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400">
-                    {credentials.alias}@{credentials.domain}
+                  <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Username Alias</span>
+                  <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-[#ededed]">
+                    {credentials.alias}
                   </div>
                 </div>
+
+                {credentials.domain && (
+                  <div className="flex flex-col gap-1.5 mb-4">
+                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verification Domain</span>
+                    <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400 flex items-center gap-1.5">
+                      {credentials.domain}
+                      {isVerifiedIdentity && (
+                        <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Verified</span>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-1.5 mb-4">
                   <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">SECP256K1 PUBLIC ADDRESS (npub)</span>
