@@ -137,6 +137,8 @@ export default function Home() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loginMethod, setLoginMethod] = useState<"passkey" | "password">("passkey");
+  const [isCheckingPasswordOnchain, setIsCheckingPasswordOnchain] = useState(false);
+  const [passwordExistsOnchain, setPasswordExistsOnchain] = useState<boolean | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -549,6 +551,29 @@ export default function Home() {
       setErrorMsg((e as Error).message || "Failed to save password option");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const checkPasswordStatusOnchain = async () => {
+    setIsCheckingPasswordOnchain(true);
+    setPasswordExistsOnchain(null);
+    try {
+      const alias = credentials.alias.trim().toLowerCase();
+      const domain = credentials.domain.trim().toLowerCase();
+      const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
+      const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
+      if (response.ok) {
+        const data = await response.json();
+        const hasOnchainSalt = !!data.vault_pointer?.argon2_salt;
+        const hasLocalVault = !!activeVaultConfig?.passwordVault;
+        setPasswordExistsOnchain(hasOnchainSalt || hasLocalVault);
+      } else {
+        setPasswordExistsOnchain(!!activeVaultConfig?.passwordVault);
+      }
+    } catch {
+      setPasswordExistsOnchain(!!activeVaultConfig?.passwordVault);
+    } finally {
+      setIsCheckingPasswordOnchain(false);
     }
   };
 
@@ -1260,10 +1285,15 @@ export default function Home() {
                   <span className="text-[10px] text-neutral-400">Add or update an alternative password login method:</span>
                   <button
                     className="bg-[#161412] border border-white/5 text-[#ededed] py-2.5 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                    onClick={() => setIsPasswordDrawerOpen(true)}
+                    onClick={() => {
+                      setIsPasswordDrawerOpen(true);
+                      checkPasswordStatusOnchain();
+                    }}
                     disabled={isLoading}
                   >
-                    <span>Configure Password Login</span>
+                    <span>
+                      {activeVaultConfig?.passwordVault ? "Update Password Login" : "Configure Password Login"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -1481,39 +1511,64 @@ export default function Home() {
           </button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-[#161412] flex flex-col gap-4">
-          <p className="text-[11px] text-[#a3a3a3]">
-            Set a client-side Argon2id password key wrap. You can use this password to decrypt your vault on other devices that do not share your hardware passkeys.
-          </p>
+          {isCheckingPasswordOnchain ? (
+            <div className="flex flex-col items-center justify-center py-10 gap-3">
+              <div className="w-6 h-6 border-2 border-t-transparent border-emerald-400 rounded-full animate-spin"></div>
+              <span className="font-mono text-xs text-neutral-400">Verifying onchain registry salt...</span>
+            </div>
+          ) : (
+            <>
+              {passwordExistsOnchain !== null && (
+                <div className="flex items-center gap-1.5 px-3 py-2 bg-[#0b0a09] border border-white/5 rounded-xl font-mono text-[10px]">
+                  {passwordExistsOnchain ? (
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      <span className="text-amber-400">Registered Password Detected on Registry</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <span className="text-emerald-400">No Password Configured (will create new)</span>
+                    </>
+                  )}
+                </div>
+              )}
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">New Password</label>
-            <input
-              type="password"
-              placeholder="Enter new secure password"
-              className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-            />
-          </div>
+              <p className="text-[11px] text-[#a3a3a3]">
+                Set a client-side Argon2id password key wrap. You can use this password to decrypt your vault on other devices that do not share your hardware passkeys.
+              </p>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Confirm Password</label>
-            <input
-              type="password"
-              placeholder="Confirm password"
-              className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-            />
-          </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">New Password</label>
+                <input
+                  type="password"
+                  placeholder="Enter new secure password"
+                  className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+              </div>
 
-          <button
-            className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-4"
-            onClick={handleSaveAlternativePassword}
-            disabled={isLoading || !newPassword || !confirmPassword}
-          >
-            <span>{isLoading ? "DERIVING ARGON2ID WRAP..." : "SAVE PASSWORD OPTION"}</span>
-          </button>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-mono text-[#a3a3a3] uppercase tracking-wider">Confirm Password</label>
+                <input
+                  type="password"
+                  placeholder="Confirm password"
+                  className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </div>
+
+              <button
+                className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-4"
+                onClick={handleSaveAlternativePassword}
+                disabled={isLoading || !newPassword || !confirmPassword}
+              >
+                <span>{isLoading ? "DERIVING ARGON2ID WRAP..." : "SAVE PASSWORD OPTION"}</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
