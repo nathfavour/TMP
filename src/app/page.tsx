@@ -539,6 +539,28 @@ export default function Home() {
         }
       }
 
+      // Clear old cached emails if switching to a different account
+      const oldCredsRaw = localStorage.getItem("tendon_active_creds");
+      let isDifferentAccount = false;
+      if (oldCredsRaw) {
+        try {
+          const oldCreds = JSON.parse(oldCredsRaw);
+          if (oldCreds.npub !== npub) {
+            isDifferentAccount = true;
+          }
+        } catch {
+          isDifferentAccount = true;
+        }
+      } else {
+        isDifferentAccount = true;
+      }
+
+      if (isDifferentAccount) {
+        localStorage.removeItem("tendon_emails_cache");
+        setEmails([]);
+        setSelectedEmailId(null);
+      }
+
       const activeCreds = { npub, alias, authMethod: methodUsed, domain };
       setCredentials(activeCreds);
       setActivePrivKey(privateKeyBytes);
