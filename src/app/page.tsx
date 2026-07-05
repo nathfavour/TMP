@@ -34,7 +34,13 @@ interface Email {
 interface AccountVaultConfig {
   alias: string;
   domain: string;
-  passkeys: { credentialIdHex: string; vault: EncryptedVault }[];
+  passkeys: { 
+    credentialIdHex: string; 
+    vault: EncryptedVault; 
+    name?: string; 
+    createdDomain?: string; 
+    createdAt?: number;
+  }[];
   passwordVault?: EncryptedVault;
 }
 
@@ -95,6 +101,7 @@ export default function Home() {
   });
 
   const [activePrivKey, setActivePrivKey] = useState<Uint8Array | null>(null);
+  const [activeVaultConfig, setActiveVaultConfig] = useState<AccountVaultConfig | null>(null);
 
   // Drawer & form interaction states
   const [tempAlias, setTempAlias] = useState("");
@@ -108,9 +115,33 @@ export default function Home() {
   const [passwordInput, setPasswordInput] = useState("");
   const [mnemonicInput, setMnemonicInput] = useState("");
   const [generatedMnemonic, setGeneratedMnemonic] = useState("");
+  const [passkeyNameInput, setPasskeyNameInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+
+  const loadActiveVaultConfig = () => {
+    if (typeof window !== "undefined" && credentials.alias && credentials.domain) {
+      const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+      const saved = localStorage.getItem(vaultKey);
+      if (saved) {
+        try {
+          setActiveVaultConfig(JSON.parse(saved));
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        setActiveVaultConfig(null);
+      }
+    } else {
+      setActiveVaultConfig(null);
+    }
+  };
+
+  // Load vault configuration when credentials change
+  useEffect(() => {
+    loadActiveVaultConfig();
+  }, [credentials]);
 
   // Email storage state
   const [emails, setEmails] = useState<Email[]>(() => {
@@ -249,27 +280,34 @@ export default function Home() {
             const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
             const { key, credentialIdHex } = await loginPasskey(allowedIds);
           
-          // Try to authenticate with the chosen one
-          let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
-          if (!matched) {
-            // Find key using derived key directly
-            matched = accountVault.passkeys[0];
+            // Try to authenticate with the chosen one
+            let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
+            if (!matched) {
+              // Find key using derived key directly
+              matched = accountVault.passkeys[0];
+            }
+            
+            privateKeyBytes = await decryptVault(matched.vault, key);
+          } else {
+            // Register new passkey
+            const { registerPasskey } = await import("@/lib/tmp/crypto");
+            const { key, credentialIdHex } = await registerPasskey(alias);
+            
+            privateKeyBytes = generateRandomPrivkey();
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const vault = await encryptVault(privateKeyBytes, key, salt);
+            
+            accountVault.passkeys.push({ 
+              credentialIdHex, 
+              vault,
+              name: passkeyNameInput.trim() || `Passkey 1`,
+              createdDomain: window.location.host,
+              createdAt: Date.now()
+            });
+            localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+            setPasskeyNameInput("");
           }
-          
-          privateKeyBytes = await decryptVault(matched.vault, key);
-        } else {
-          // Register new passkey
-          const { registerPasskey } = await import("@/lib/tmp/crypto");
-          const { key, credentialIdHex } = await registerPasskey(alias);
-          
-          privateKeyBytes = generateRandomPrivkey();
-          const salt = crypto.getRandomValues(new Uint8Array(16));
-          const vault = await encryptVault(privateKeyBytes, key, salt);
-          
-          accountVault.passkeys.push({ credentialIdHex, vault });
-          localStorage.setItem(vaultKey, JSON.stringify(accountVault));
-        }
-      } else if (authStep === "password") {
+        } else if (authStep === "password") {
         methodUsed = "Password";
         if (accountVault.passwordVault) {
           const prfKey = await deriveKeyFromPassword(passwordInput, accountVault.passwordVault.salt);
