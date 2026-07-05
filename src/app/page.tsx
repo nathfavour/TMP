@@ -382,9 +382,40 @@ export default function Home() {
 
       const vaultKey = `tendon_account_vault_${alias}@${domain}`;
       const savedVaultRaw = localStorage.getItem(vaultKey);
-      const accountVault: AccountVaultConfig = savedVaultRaw 
+      let accountVault: AccountVaultConfig = savedVaultRaw 
         ? JSON.parse(savedVaultRaw) 
         : { alias, domain, passkeys: [] };
+
+      // Query Nostr relays if local vault is missing or empty
+      if (!savedVaultRaw || (!accountVault.passwordVault && accountVault.passkeys.length === 0)) {
+        let hexPub = "";
+        try {
+          if (alias.startsWith("npub1")) {
+            const { npubToBytes } = await import("@/lib/tmp/crypto");
+            hexPub = bytesToHex(npubToBytes(alias));
+          } else {
+            const registryResponse = await fetch(`http://${domain}/.well-known/tendon.json`);
+            if (registryResponse.ok) {
+              const regData = await registryResponse.json();
+              const targetNpub = regData.names?.[alias];
+              if (targetNpub) {
+                const { npubToBytes } = await import("@/lib/tmp/crypto");
+                hexPub = bytesToHex(npubToBytes(targetNpub));
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("Could not resolve hex public key for relay vault fetch:", err);
+        }
+
+        if (hexPub) {
+          const remoteVault = await fetchVaultFromRelays(hexPub);
+          if (remoteVault) {
+            accountVault = remoteVault;
+            localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+          }
+        }
+      }
 
       const activeStep = overrideAuthStep || authStep;
 
@@ -417,14 +448,18 @@ export default function Home() {
           const salt = crypto.getRandomValues(new Uint8Array(16));
           const vault = await encryptVault(privateKeyBytes, key, salt);
           
+          const randHex = bytesToHex(crypto.getRandomValues(new Uint8Array(3)));
+          const timestamp = new Date().getTime();
+
           accountVault.passkeys.push({ 
             credentialIdHex, 
             vault,
-            name: `Passkey-${Math.random().toString(36).substring(2, 7)}`,
+            name: `Passkey-${randHex}`,
             createdDomain: window.location.host,
-            createdAt: Date.now()
+            createdAt: timestamp
           });
           localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+          await publishVaultToRelays(accountVault, privateKeyBytes);
         }
       } else if (activeStep === "password") {
         methodUsed = "Password";
@@ -540,6 +575,68 @@ export default function Home() {
     }
   };
 
+  const publishVaultToRelays = async (accountVault: AccountVaultConfig, privKey: Uint8Array) => {
+    try {
+      const myHexPub = bytesToHex(getPubkeyFromPrivkey(privKey));
+      const signedEvent = signEvent({
+        pubkey: myHexPub,
+        created_at: Math.floor(Date.now() / 1000),
+        kind: 30078,
+        tags: [["d", "tendon-mailbox-vault"]],
+        content: JSON.stringify(accountVault),
+      }, privKey);
+
+      if (relayPoolRef.current) {
+        await relayPoolRef.current.publish(signedEvent);
+        console.log("Published encrypted vault to Nostr relays successfully!");
+      }
+    } catch (e) {
+      console.warn("Could not publish vault to Nostr relays:", e);
+    }
+  };
+
+  const fetchVaultFromRelays = (hexPub: string): Promise<AccountVaultConfig | null> => {
+    return new Promise((resolve) => {
+      if (!relayPoolRef.current) {
+        resolve(null);
+        return;
+      }
+
+      const pool = relayPoolRef.current;
+      const subId = `vault-fetch-${Math.random().toString(36).substring(7)}`;
+      let resolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          pool.unsubscribe(subId);
+          resolve(null);
+        }
+      }, 3500);
+
+      const tempListener = (event: NostrEvent) => {
+        if (event.kind === 30078 && event.pubkey === hexPub) {
+          const dTag = event.tags.find(t => t[0] === "d");
+          if (dTag && dTag[1] === "tendon-mailbox-vault") {
+            try {
+              const parsed = JSON.parse(event.content);
+              resolved = true;
+              clearTimeout(timeout);
+              pool.removeListener(tempListener);
+              pool.unsubscribe(subId);
+              resolve(parsed);
+            } catch (e) {
+              console.warn("Failed to parse remote vault content:", e);
+            }
+          }
+        }
+      };
+
+      pool.addListener(tempListener);
+      pool.subscribe(subId, [{ kinds: [30078], authors: [hexPub], "#d": ["tendon-mailbox-vault"] }]);
+    });
+  };
+
   const handleRenamePasskey = (credentialIdHex: string, newName: string) => {
     if (!newName.trim()) return;
     const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
@@ -618,6 +715,7 @@ export default function Home() {
       accountVault.passwordVault = vault;
       
       localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+      await publishVaultToRelays(accountVault, activePrivKey);
       setSuccessMsg("Alternative password login configured successfully!");
       setIsPasswordDrawerOpen(false);
       setNewPassword("");
@@ -673,6 +771,7 @@ export default function Home() {
       accountVault.mnemonicVault = vault;
       
       localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+      await publishVaultToRelays(accountVault, activePrivKey);
       setActiveMnemonicBackup(mnemonic);
       setIsMnemonicDrawerOpen(true);
       setSuccessMsg("Mnemonic recovery phrase backup generated successfully!");
