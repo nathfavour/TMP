@@ -54,7 +54,20 @@ export default function Home() {
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
 
   // Onboarding wizard
-  const [showOnboarding, setShowOnboarding] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("tendon_active_creds");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed.npub) return false;
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    return true;
+  });
 
   // Credentials State
   const [credentials, setCredentials] = useState<{
@@ -85,7 +98,7 @@ export default function Home() {
 
   // Drawer & form interaction states
   const [tempAlias, setTempAlias] = useState("");
-  const [tempDomain, setTempDomain] = useState(() => {
+  const [tempDomain] = useState(() => {
     if (typeof window !== "undefined") {
       return window.location.host;
     }
@@ -122,13 +135,6 @@ export default function Home() {
   // Relay connection status
   const [connectedRelays, setConnectedRelays] = useState<number>(0);
   const relayPoolRef = useRef<NostrRelayPool | null>(null);
-
-  // Auto-hide onboarding if already logged in
-  useEffect(() => {
-    if (credentials.npub) {
-      setShowOnboarding(false);
-    }
-  }, [credentials]);
 
   // Save emails to localStorage when updated
   useEffect(() => {
@@ -234,14 +240,14 @@ export default function Home() {
         ? JSON.parse(savedVaultRaw) 
         : { alias, domain, passkeys: [] };
 
-      if (authStep === "passkey") {
-        methodUsed = "Passkey";
-        const { prfKey, loginPasskey } = await import("@/lib/tmp/crypto");
-        
-        if (accountVault.passkeys.length > 0) {
-          // Select list of credential IDs
-          const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
-          const { key, credentialIdHex } = await loginPasskey(allowedIds[0]); // default fallback
+        if (authStep === "passkey") {
+          methodUsed = "Passkey";
+          const { loginPasskey } = await import("@/lib/tmp/crypto");
+          
+          if (accountVault.passkeys.length > 0) {
+            // Select list of credential IDs
+            const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
+            const { key, credentialIdHex } = await loginPasskey(allowedIds);
           
           // Try to authenticate with the chosen one
           let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
