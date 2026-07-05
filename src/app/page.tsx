@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
   bytesToNpub,
-  generateRandomPrivkey,
   getPubkeyFromPrivkey,
   encryptVault,
   decryptVault,
@@ -175,9 +174,9 @@ export default function Home() {
               setResolvedUsername(name);
               setSearchedNpubHint(input);
             } else {
-              setIsAliasTaken(null);
+              setIsAliasTaken(true);
               setResolvedUsername("");
-              setSearchedNpubHint("");
+              setSearchedNpubHint(input);
             }
           } else {
             const alias = input.toLowerCase();
@@ -489,19 +488,34 @@ export default function Home() {
             throw new Error("Incorrect password. Decryption failed.");
           }
         } else {
-          privateKeyBytes = generateRandomPrivkey();
+          const { createNewMnemonic, deriveKeyFromMnemonic, sha256 } = await import("@/lib/tmp/crypto");
+          const mnemonic = createNewMnemonic();
+          
+          privateKeyBytes = deriveKeyFromMnemonic(mnemonic);
           const salt = crypto.getRandomValues(new Uint8Array(16));
           const prfKey = await deriveKeyFromPassword(passwordInput, bytesToHex(salt));
           const vault = await encryptVault(privateKeyBytes, prfKey, salt);
           accountVault.passwordVault = vault;
+
+          // Encrypt root mnemonic text using private key hash for future retrieval in settings
+          const privKeyHash = new Uint8Array(sha256(privateKeyBytes).slice(0, 32));
+          const mSalt = crypto.getRandomValues(new Uint8Array(16));
+          const encMnemonic = await encryptVault(new TextEncoder().encode(mnemonic), privKeyHash, mSalt);
+          accountVault.encryptedMnemonic = encMnemonic;
+
           localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+          await publishVaultToRelays(accountVault, privateKeyBytes);
+
+          // Force trigger recovery phrase backup display drawer upon successful signup
+          setActiveMnemonicBackup(mnemonic);
+          setIsMnemonicDrawerOpen(true);
         }
       } else if (activeStep === "mnemonic") {
         methodUsed = "Mnemonic";
         if (!mnemonicInput.trim()) {
           throw new Error("Mnemonic recovery phrase must not be empty");
         }
-        const { deriveKeyFromMnemonic } = await import("@/lib/tmp/crypto");
+        const { deriveKeyFromMnemonic, sha256 } = await import("@/lib/tmp/crypto");
         
         // Check if there is an encrypted vault wrapper for mnemonic first
         if (accountVault.mnemonicVault) {
@@ -515,6 +529,17 @@ export default function Home() {
           // Fall back to direct deterministic derivation
           try {
             privateKeyBytes = deriveKeyFromMnemonic(mnemonicInput);
+            
+            // If we are registering (minting) this recovery phrase as a new username:
+            if (isAliasTaken === false) {
+              const privKeyHash = new Uint8Array(sha256(privateKeyBytes).slice(0, 32));
+              const mSalt = crypto.getRandomValues(new Uint8Array(16));
+              const encMnemonic = await encryptVault(new TextEncoder().encode(mnemonicInput), privKeyHash, mSalt);
+              accountVault.encryptedMnemonic = encMnemonic;
+              
+              localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+              await publishVaultToRelays(accountVault, privateKeyBytes);
+            }
           } catch (err) {
             throw new Error(`Failed to derive key from recovery phrase: ${(err as Error).message}`);
           }
@@ -1145,14 +1170,16 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Password input shown if signing in and method is password */}
-              {!credentials.alias && isAliasTaken === true && loginMethod === "password" && (
+              {/* Password input shown if signing in/signup and method is password */}
+              {!credentials.alias && isAliasTaken !== null && loginMethod === "password" && (
                 <div className="flex flex-col gap-1.5 mt-1.5 animate-fadeIn">
-                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Password</label>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
+                    {isAliasTaken === false ? "Set Secure Password" : "Password"}
+                  </label>
                   <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
                     <input
                       type="password"
-                      placeholder="Enter decryption password"
+                      placeholder={isAliasTaken === false ? "Choose a secure password" : "Enter decryption password"}
                       className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
                       value={passwordInput}
                       onChange={(e) => setPasswordInput(e.target.value)}
@@ -1161,10 +1188,12 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Mnemonic phrase input shown if signing in and method is recovery phrase */}
-              {!credentials.alias && isAliasTaken === true && loginMethod === "mnemonic" && (
+              {/* Mnemonic phrase input shown if signing in/signup and method is recovery phrase */}
+              {!credentials.alias && isAliasTaken !== null && loginMethod === "mnemonic" && (
                 <div className="flex flex-col gap-1.5 mt-1.5 animate-fadeIn">
-                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Recovery Phrase (12 Words)</label>
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
+                    {isAliasTaken === false ? "Enter Phrase to Import" : "Recovery Phrase (12 Words)"}
+                  </label>
                   <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
                     <textarea
                       placeholder="Enter your 12-word mnemonic phrase"
@@ -1183,24 +1212,22 @@ export default function Home() {
                     setErrorMsg("Please enter a username alias first");
                     return;
                   }
-                  if (!credentials.alias && isAliasTaken === true) {
+                  if (!credentials.alias) {
                     if (loginMethod === "password") {
                       if (!passwordInput) {
-                        setErrorMsg("Password is required to sign in");
+                        setErrorMsg(isAliasTaken === false ? "Password is required to register" : "Password is required to sign in");
                         return;
                       }
                       handleConnectSetup("password");
                     } else if (loginMethod === "mnemonic") {
                       if (!mnemonicInput) {
-                        setErrorMsg("Recovery phrase is required to sign in");
+                        setErrorMsg(isAliasTaken === false ? "Recovery phrase is required to import" : "Recovery phrase is required to sign in");
                         return;
                       }
                       handleConnectSetup("mnemonic");
                     } else {
                       handleConnectSetup("passkey");
                     }
-                  } else {
-                    handleConnectSetup("passkey");
                   }
                 }}
                 disabled={isLoading}
@@ -1215,12 +1242,12 @@ export default function Home() {
                       ? "UNLOCK WITH PASSKEY" 
                       : isAliasTaken === true 
                         ? (loginMethod === "password" ? "SIGN IN WITH PASSWORD" : loginMethod === "mnemonic" ? "SIGN IN WITH PHRASE" : "SIGN IN WITH PASSKEY")
-                        : "MINT WITH PASSKEY"}
+                        : (loginMethod === "password" ? "MINT WITH PASSWORD" : loginMethod === "mnemonic" ? "MINT WITH PHRASE" : "MINT WITH PASSKEY")}
                 </span>
               </button>
 
-              {/* Alternative method toggles (only when username exists on server) */}
-              {!credentials.alias && isAliasTaken === true && (
+              {/* Alternative method toggles (only when username/npub is typed) */}
+              {!credentials.alias && isAliasTaken !== null && (
                 <div className="flex justify-center gap-4 mt-2">
                   {loginMethod !== "passkey" && (
                     <button

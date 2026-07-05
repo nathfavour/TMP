@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 
+export const dynamic = "force-dynamic";
+
 const DIRECTORY_FILE = path.join(process.cwd(), "tendon_directory.json");
 
 function readDirectory(): Record<string, string> {
