@@ -122,7 +122,7 @@ export default function Home() {
 
   // Drawer & form interaction states
   const [tempAlias, setTempAlias] = useState("");
-  const [tempDomain] = useState(() => {
+  const [tempDomain, setTempDomain] = useState(() => {
     if (typeof window !== "undefined") {
       return window.location.host;
     }
@@ -264,7 +264,7 @@ export default function Home() {
   }, [credentials, activePrivKey]);
 
   // Connect helper
-  const handleConnectSetup = async () => {
+  const handleConnectSetup = async (overrideAuthStep?: "passkey" | "password" | "mnemonic") => {
     setIsLoading(true);
     setErrorMsg("");
     try {
@@ -283,43 +283,45 @@ export default function Home() {
         ? JSON.parse(savedVaultRaw) 
         : { alias, domain, passkeys: [] };
 
-        if (authStep === "passkey") {
-          methodUsed = "Passkey";
-          const { loginPasskey } = await import("@/lib/tmp/crypto");
-          
-          if (accountVault.passkeys.length > 0) {
-            // Select list of credential IDs
-            const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
-            const { key, credentialIdHex } = await loginPasskey(allowedIds);
-          
-            // Try to authenticate with the chosen one
-            let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
-            if (!matched) {
-              // Find key using derived key directly
-              matched = accountVault.passkeys[0];
-            }
-            
-            privateKeyBytes = await decryptVault(matched.vault, key);
-          } else {
-            // Register new passkey
-            const { registerPasskey } = await import("@/lib/tmp/crypto");
-            const { key, credentialIdHex } = await registerPasskey(alias);
-            
-            privateKeyBytes = generateRandomPrivkey();
-            const salt = crypto.getRandomValues(new Uint8Array(16));
-            const vault = await encryptVault(privateKeyBytes, key, salt);
-            
-            accountVault.passkeys.push({ 
-              credentialIdHex, 
-              vault,
-              name: passkeyNameInput.trim() || `Passkey 1`,
-              createdDomain: window.location.host,
-              createdAt: Date.now()
-            });
-            localStorage.setItem(vaultKey, JSON.stringify(accountVault));
-            setPasskeyNameInput("");
+      const activeStep = overrideAuthStep || authStep;
+
+      if (activeStep === "passkey") {
+        methodUsed = "Passkey";
+        const { loginPasskey } = await import("@/lib/tmp/crypto");
+        
+        if (accountVault.passkeys.length > 0) {
+          // Select list of credential IDs
+          const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
+          const { key, credentialIdHex } = await loginPasskey(allowedIds);
+        
+          // Try to authenticate with the chosen one
+          let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
+          if (!matched) {
+            // Find key using derived key directly
+            matched = accountVault.passkeys[0];
           }
-        } else if (authStep === "password") {
+          
+          privateKeyBytes = await decryptVault(matched.vault, key);
+        } else {
+          // Register new passkey
+          const { registerPasskey } = await import("@/lib/tmp/crypto");
+          const { key, credentialIdHex } = await registerPasskey(alias);
+          
+          privateKeyBytes = generateRandomPrivkey();
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+          const vault = await encryptVault(privateKeyBytes, key, salt);
+          
+          accountVault.passkeys.push({ 
+            credentialIdHex, 
+            vault,
+            name: passkeyNameInput.trim() || `Passkey 1`,
+            createdDomain: window.location.host,
+            createdAt: Date.now()
+          });
+          localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+          setPasskeyNameInput("");
+        }
+      } else if (activeStep === "password") {
         methodUsed = "Password";
         if (accountVault.passwordVault) {
           const prfKey = await deriveKeyFromPassword(passwordInput, accountVault.passwordVault.salt);
@@ -608,17 +610,31 @@ export default function Home() {
 
             {authStep === "choose" ? (
               <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Choose Username</label>
-                  <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
-                    <input
-                      type="text"
-                      placeholder="e.g. carol"
-                      className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
-                      value={tempAlias}
-                      onChange={(e) => setTempAlias(e.target.value)}
-                    />
-                    <span className="text-xs text-neutral-500 font-mono">@{tempDomain}</span>
+                <div className="flex flex-col md:flex-row gap-3">
+                  <div className="flex flex-col gap-1.5 flex-1">
+                    <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Choose Username</label>
+                    <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
+                      <input
+                        type="text"
+                        placeholder="e.g. carol"
+                        className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
+                        value={tempAlias}
+                        onChange={(e) => setTempAlias(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5 flex-1">
+                    <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Verified DNS Domain</label>
+                    <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
+                      <span className="text-xs text-neutral-500 font-mono mr-1">@</span>
+                      <input
+                        type="text"
+                        placeholder="e.g. tendon.org"
+                        className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
+                        value={tempDomain}
+                        onChange={(e) => setTempDomain(e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1212,6 +1228,68 @@ export default function Home() {
           )}
         </div>
       </div>
+
+      {/* Mobile Bottom Navbar (Deep ash background) */}
+      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#161412] border-t border-white/5 z-40 justify-around items-center px-4">
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
+            activeFolder === "inbox" && mobileView === "list" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => handleSelectFolder("inbox")}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+          </svg>
+          <span>Inbox</span>
+        </button>
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
+            activeFolder === "sent" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => handleSelectFolder("sent")}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+          <span>Send</span>
+        </button>
+        <button 
+          className="flex flex-col items-center justify-center w-10 h-10 bg-[#0b0a09] border border-white/5 text-emerald-400 rounded-full hover:scale-105 active:scale-95 transition-all shadow-[0_4px_12px_rgba(16,185,129,0.2)] cursor-pointer disabled:opacity-50"
+          onClick={() => setIsComposeOpen(true)}
+          disabled={!activePrivKey}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
+            activeFolder === "drafts" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => handleSelectFolder("drafts")}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+          <span>Drafts</span>
+        </button>
+        <button 
+          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
+            isConnectDrawerOpen ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
+          }`}
+          onClick={() => setIsConnectDrawerOpen(true)}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          <span>Settings</span>
+        </button>
+      </nav>
 
       {/* Floating Compose Panel (Rounded Card overlay with tactile backdrop) */}
       {isComposeOpen && (
