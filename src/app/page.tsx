@@ -136,6 +136,7 @@ export default function Home() {
   const [isPasswordDrawerOpen, setIsPasswordDrawerOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [loginMethod, setLoginMethod] = useState<"passkey" | "password">("passkey");
   const [isCheckingPasswordOnchain, setIsCheckingPasswordOnchain] = useState(false);
   const [passwordExistsOnchain, setPasswordExistsOnchain] = useState<boolean | null>(null);
@@ -537,6 +538,19 @@ export default function Home() {
         ? JSON.parse(savedVaultRaw) 
         : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
 
+      // Verify old password if update is requested
+      if (accountVault.passwordVault) {
+        if (!currentPassword) {
+          throw new Error("Current password is required to update the password login method");
+        }
+        try {
+          const verifyPrfKey = await deriveKeyFromPassword(currentPassword, accountVault.passwordVault.salt);
+          await decryptVault(accountVault.passwordVault, verifyPrfKey);
+        } catch {
+          throw new Error("Current password verification failed. Please try again.");
+        }
+      }
+
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const prfKey = await deriveKeyFromPassword(newPassword, bytesToHex(salt));
       const vault = await encryptVault(activePrivKey, prfKey, salt);
@@ -547,6 +561,7 @@ export default function Home() {
       setIsPasswordDrawerOpen(false);
       setNewPassword("");
       setConfirmPassword("");
+      setCurrentPassword("");
     } catch (e) {
       setErrorMsg((e as Error).message || "Failed to save password option");
     } finally {
@@ -1536,6 +1551,19 @@ export default function Home() {
               <p className="text-[11px] text-[#a3a3a3]">
                 Set a client-side Argon2id password key wrap. You can use this password to decrypt your vault on other devices that do not share your hardware passkeys.
               </p>
+
+              {passwordExistsOnchain === true && (
+                <div className="flex flex-col gap-1.5 animate-fadeIn">
+                  <label className="text-[10px] font-mono text-amber-400 uppercase tracking-wider">Current Password</label>
+                  <input
+                    type="password"
+                    placeholder="Enter current password to verify ownership"
+                    className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-amber-500/50"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                  />
+                </div>
+              )}
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">New Password</label>
