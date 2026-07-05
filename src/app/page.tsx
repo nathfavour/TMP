@@ -8,8 +8,6 @@ import {
   encryptVault,
   decryptVault,
   deriveKeyFromPassword,
-  deriveKeyFromMnemonic,
-  createNewMnemonic,
   bytesToHex,
   type EncryptedVault
 } from "@/lib/tmp/crypto";
@@ -130,8 +128,6 @@ export default function Home() {
   });
   const [authStep, setAuthStep] = useState<"choose" | "passkey" | "password" | "mnemonic">("choose");
   const [passwordInput, setPasswordInput] = useState("");
-  const [mnemonicInput, setMnemonicInput] = useState("");
-  const [generatedMnemonic, setGeneratedMnemonic] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -333,12 +329,6 @@ export default function Home() {
           accountVault.passwordVault = vault;
           localStorage.setItem(vaultKey, JSON.stringify(accountVault));
         }
-      } else if (authStep === "mnemonic") {
-        methodUsed = "Mnemonic";
-        if (!mnemonicInput.trim()) {
-          throw new Error("Mnemonic recovery phrase required");
-        }
-        privateKeyBytes = deriveKeyFromMnemonic(mnemonicInput);
       } else {
         throw new Error("Invalid authentication pathway selection");
       }
@@ -564,7 +554,6 @@ export default function Home() {
     });
     setActivePrivKey(null);
     localStorage.removeItem("tendon_active_creds");
-    setAuthStep("choose");
     setShowOnboarding(true);
   };
 
@@ -606,119 +595,39 @@ export default function Home() {
               </div>
             )}
 
-            {authStep === "choose" ? (
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Username</label>
-                    <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
-                      <input
-                        type="text"
-                        placeholder="e.g. carol"
-                        className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
-                        value={tempAlias}
-                        onChange={(e) => setTempAlias(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
-                  onClick={() => {
-                    if (!tempAlias.trim()) {
-                      setErrorMsg("Please enter a username alias first");
-                      return;
-                    }
-                    handleConnectSetup("passkey");
-                  }}
-                  disabled={isLoading}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M12 2a5 5 0 0 0-5 5v4H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zM9 7a3 3 0 0 1 6 0v4H9V7zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
-                  </svg>
-                  <span>{isLoading ? "CONNECTING..." : "CONNECT WITH PASSKEY"}</span>
-                </button>
-
-                <div className="flex justify-center mt-4">
-                  <button
-                    className="text-xs text-neutral-500 hover:text-emerald-400 font-mono transition-colors"
-                    onClick={() => {
-                      setAuthStep("mnemonic");
-                      setGeneratedMnemonic(createNewMnemonic());
-                    }}
-                  >
-                    Or recover vault via mnemonic backup &rarr;
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col">
-                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
-                  <div className="text-xs font-semibold text-[#ededed] mb-4">
-                    {authStep === "passkey" && "Hardware Passkey Enrollment"}
-                    {authStep === "password" && "Set Local Vault Password"}
-                    {authStep === "mnemonic" && "Mnemonic Vault Recovery"}
-                  </div>
-
-                  {authStep === "password" && (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Username</label>
+                  <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
                     <input
-                      type="password"
-                      className="w-full bg-[#161412] border border-white/15 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50 mb-4"
-                      placeholder="Enter decryption password"
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
+                      type="text"
+                      placeholder="e.g. carol"
+                      className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
+                      value={tempAlias}
+                      onChange={(e) => setTempAlias(e.target.value)}
                     />
-                  )}
-
-                  {authStep === "mnemonic" && (
-                    <div className="flex flex-col gap-4">
-                      {generatedMnemonic && (
-                        <div className="flex flex-col gap-2">
-                          <span className="font-mono text-[9px] text-neutral-500 uppercase">New recovery mnemonic (Copy and save)</span>
-                          <div className="bg-[#161412] border border-white/5 rounded-lg p-3 text-xs text-emerald-400 font-mono select-all">
-                            {generatedMnemonic}
-                          </div>
-                        </div>
-                      )}
-                      <textarea
-                        className="w-full bg-[#161412] border border-white/15 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50 resize-none"
-                        rows={3}
-                        placeholder="Paste recovery mnemonic word list here..."
-                        value={mnemonicInput}
-                        onChange={(e) => setMnemonicInput(e.target.value)}
-                      />
-                    </div>
-                  )}
-
-                  {authStep === "passkey" && (
-                    <div className="text-xs text-neutral-400 leading-relaxed mb-2">
-                      Click the button below to initialize biometric/security key approval. Your browser will prompt you to create or approve a passkey.
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    className="flex-1 bg-[#0b0a09] border border-white/10 text-neutral-400 py-3 rounded-xl text-xs font-semibold hover:border-white/30 transition-all cursor-pointer"
-                    onClick={() => {
-                      setAuthStep("choose");
-                      setErrorMsg("");
-                    }}
-                    disabled={isLoading}
-                  >
-                    BACK
-                  </button>
-                  <button
-                    className="flex-2 bg-emerald-500 text-black py-3 rounded-xl text-xs font-bold hover:shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
-                    onClick={() => handleConnectSetup()}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? "AUTHENTICATING..." : authStep === "passkey" ? "AUTHENTICATE PASSKEY" : "INITIALIZE VAULT"}
-                  </button>
+                  </div>
                 </div>
               </div>
-            )}
+
+              <button
+                className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
+                onClick={() => {
+                  if (!tempAlias.trim()) {
+                    setErrorMsg("Please enter a username alias first");
+                    return;
+                  }
+                  handleConnectSetup("passkey");
+                }}
+                disabled={isLoading}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M12 2a5 5 0 0 0-5 5v4H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zM9 7a3 3 0 0 1 6 0v4H9V7zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
+                </svg>
+                <span>{isLoading ? "CONNECTING..." : "CONNECT WITH PASSKEY"}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -862,7 +771,6 @@ export default function Home() {
                   <button
                     className="mt-2 bg-emerald-500 text-black px-4 py-2 rounded-lg font-mono text-xs font-bold hover:scale-[1.02] transition-transform cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                     onClick={() => {
-                      setAuthStep("choose");
                       setShowOnboarding(true);
                     }}
                   >
