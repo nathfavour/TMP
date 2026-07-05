@@ -236,7 +236,7 @@ export default function Home() {
 
       const vaultKey = `tendon_account_vault_${alias}@${domain}`;
       const savedVaultRaw = localStorage.getItem(vaultKey);
-      let accountVault: AccountVaultConfig = savedVaultRaw 
+      const accountVault: AccountVaultConfig = savedVaultRaw 
         ? JSON.parse(savedVaultRaw) 
         : { alias, domain, passkeys: [] };
 
@@ -332,7 +332,7 @@ export default function Home() {
 
       const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
       const savedVaultRaw = localStorage.getItem(vaultKey);
-      let accountVault: AccountVaultConfig = savedVaultRaw 
+      const accountVault: AccountVaultConfig = savedVaultRaw 
         ? JSON.parse(savedVaultRaw) 
         : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
 
@@ -358,7 +358,7 @@ export default function Home() {
     try {
       const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
       const savedVaultRaw = localStorage.getItem(vaultKey);
-      let accountVault: AccountVaultConfig = savedVaultRaw 
+      const accountVault: AccountVaultConfig = savedVaultRaw 
         ? JSON.parse(savedVaultRaw) 
         : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
 
