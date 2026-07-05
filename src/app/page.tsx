@@ -358,16 +358,19 @@ export default function Home() {
         methodUsed = "Passkey";
         const { loginPasskey } = await import("@/lib/tmp/crypto");
         
-        if (accountVault.passkeys.length > 0) {
+        if (isAliasTaken === true || accountVault.passkeys.length > 0) {
           // Select list of credential IDs
           const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
           const { key, credentialIdHex } = await loginPasskey(allowedIds);
         
           // Try to authenticate with the chosen one
           let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
-          if (!matched) {
-            // Find key using derived key directly
+          if (!matched && accountVault.passkeys.length > 0) {
             matched = accountVault.passkeys[0];
+          }
+          
+          if (!matched) {
+            throw new Error("Local passkey vault credentials not found on this device. Please sign in using your alternative Password instead.");
           }
           
           privateKeyBytes = await decryptVault(matched.vault, key);
