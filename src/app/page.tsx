@@ -558,7 +558,6 @@ export default function Home() {
     setIsCheckingPasswordOnchain(true);
     setPasswordExistsOnchain(null);
     try {
-      const alias = credentials.alias.trim().toLowerCase();
       const domain = credentials.domain.trim().toLowerCase();
       const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
       const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
