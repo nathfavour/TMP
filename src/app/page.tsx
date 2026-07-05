@@ -397,9 +397,16 @@ export default function Home() {
         }
       } else if (activeStep === "password") {
         methodUsed = "Password";
-        if (accountVault.passwordVault) {
-          const prfKey = await deriveKeyFromPassword(passwordInput, accountVault.passwordVault.salt);
-          privateKeyBytes = await decryptVault(accountVault.passwordVault, prfKey);
+        if (isAliasTaken === true || accountVault.passwordVault) {
+          if (!accountVault.passwordVault) {
+            throw new Error("This username is already registered on the network, but no password vault exists on this device. Please use Passkey instead.");
+          }
+          try {
+            const prfKey = await deriveKeyFromPassword(passwordInput, accountVault.passwordVault.salt);
+            privateKeyBytes = await decryptVault(accountVault.passwordVault, prfKey);
+          } catch {
+            throw new Error("Incorrect password. Decryption failed.");
+          }
         } else {
           privateKeyBytes = generateRandomPrivkey();
           const salt = crypto.getRandomValues(new Uint8Array(16));
