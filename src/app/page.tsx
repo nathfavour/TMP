@@ -141,6 +141,8 @@ export default function Home() {
   const [isCheckingPasswordOnchain, setIsCheckingPasswordOnchain] = useState(false);
   const [passwordExistsOnchain, setPasswordExistsOnchain] = useState<boolean | null>(null);
   const [resolvedUsername, setResolvedUsername] = useState("");
+  const [isDeleteAccountDrawerOpen, setIsDeleteAccountDrawerOpen] = useState(false);
+  const [deleteConfirmUsername, setDeleteConfirmUsername] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -613,6 +615,38 @@ export default function Home() {
       setPasswordExistsOnchain(!!activeVaultConfig?.passwordVault);
     } finally {
       setIsCheckingPasswordOnchain(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!credentials.alias || deleteConfirmUsername.trim().toLowerCase() !== credentials.alias.toLowerCase()) {
+      setErrorMsg("Confirmation username does not match");
+      return;
+    }
+    setIsLoading(true);
+    setSuccessMsg("");
+    setErrorMsg("");
+    try {
+      // 1. Delete local vaults
+      const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+      localStorage.removeItem(vaultKey);
+
+      // 2. Clear ephemeral session data
+      sessionStorage.removeItem("tendon_active_privkey");
+      sessionStorage.removeItem("tendon_active_npub");
+      sessionStorage.removeItem("tendon_active_alias");
+      sessionStorage.removeItem("tendon_active_domain");
+
+      // 3. Reset react application states
+      setActivePrivKey(null);
+      setCredentials({ alias: "", domain: "", npub: "", authMethod: "None" });
+      setIsDeleteAccountDrawerOpen(false);
+      setDeleteConfirmUsername("");
+      setSuccessMsg("Account deleted and completely wiped from this device.");
+    } catch (e) {
+      setErrorMsg((e as Error).message || "Failed to delete account");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -1267,12 +1301,20 @@ export default function Home() {
                   </div>
                 </div>
 
-                <button
-                  className="w-full bg-[#161412] border border-red-500/30 text-red-400 font-semibold py-3 px-4 rounded-xl text-xs hover:bg-red-950/20 hover:border-red-500 hover:scale-[1.01] transition-all cursor-pointer"
-                  onClick={handleResetAuth}
-                >
-                  RESET SYSTEM STATE / DISCONNECT
-                </button>
+                <div className="flex flex-col gap-2">
+                  <button
+                    className="w-full bg-[#161412] border border-red-500/30 text-red-400 font-semibold py-3 px-4 rounded-xl text-xs hover:bg-red-950/20 hover:border-red-500 hover:scale-[1.01] transition-all cursor-pointer text-center"
+                    onClick={handleResetAuth}
+                  >
+                    RESET SYSTEM STATE / DISCONNECT
+                  </button>
+                  <button
+                    className="w-full bg-red-950/20 border border-red-500/40 text-red-500 font-bold py-3 px-4 rounded-xl text-xs hover:bg-red-900/30 hover:border-red-500 hover:scale-[1.01] transition-all cursor-pointer text-center"
+                    onClick={() => setIsDeleteAccountDrawerOpen(true)}
+                  >
+                    DELETE ACCOUNT
+                  </button>
+                </div>
               </div>
 
               <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 shadow-inner flex flex-col gap-5">
@@ -1630,6 +1672,53 @@ export default function Home() {
               </button>
             </>
           )}
+        </div>
+      </div>
+
+      {/* Account Deletion Confirmation Drawer (60% height) */}
+      {isDeleteAccountDrawerOpen && (
+        <div 
+          className="fixed inset-0 bg-black/75 backdrop-blur-[2px] z-[1001] transition-opacity" 
+          onClick={() => setIsDeleteAccountDrawerOpen(false)} 
+        />
+      )}
+      <div className={`fixed bottom-0 left-0 right-0 bg-[#161412] border-t border-red-500/30 rounded-t-2xl z-[1002] transition-transform duration-300 transform flex flex-col h-[60vh] ${
+        isDeleteAccountDrawerOpen ? "translate-y-0 shadow-[0_-12px_36px_rgba(239,68,68,0.15)]" : "translate-y-full"
+      }`}>
+        <div className="flex justify-between items-center p-5 border-b border-white/5 bg-red-950/10">
+          <span className="font-mono font-bold text-xs uppercase tracking-wider text-red-500">DANGER: Delete Account Vault</span>
+          <button className="text-[#a3a3a3] hover:text-[#ededed] p-1 cursor-pointer transition-colors" onClick={() => setIsDeleteAccountDrawerOpen(false)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1 bg-[#161412] flex flex-col gap-4">
+          <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-[11px] text-red-400 leading-relaxed">
+            <strong>CRITICAL WARNING:</strong> This action is completely irreversible. Deleting the account will permanently erase your local vaults, private keys, and config backups from this browser database. Any mail stored on relays under this identity will remain encrypted forever, and cannot be decrypted again.
+          </div>
+
+          <div className="flex flex-col gap-1.5 mt-2">
+            <label className="text-[10px] font-mono text-[#a3a3a3] uppercase tracking-wider">
+              Type your username <strong className="text-red-400 font-mono">&quot;{credentials.alias}&quot;</strong> to confirm:
+            </label>
+            <input
+              type="text"
+              placeholder="Type username here"
+              className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-red-500/50"
+              value={deleteConfirmUsername}
+              onChange={(e) => setDeleteConfirmUsername(e.target.value)}
+            />
+          </div>
+
+          <button
+            className="w-full bg-red-600 text-white font-bold py-3.5 px-4 rounded-xl text-xs hover:bg-red-700 hover:shadow-[0_4px_20px_rgba(220,38,38,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-4"
+            onClick={handleDeleteAccount}
+            disabled={isLoading || deleteConfirmUsername.trim().toLowerCase() !== credentials.alias.toLowerCase()}
+          >
+            <span>DELETE & WIPE ACCOUNT FOREVER</span>
+          </button>
         </div>
       </div>
 
