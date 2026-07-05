@@ -101,7 +101,24 @@ export default function Home() {
   });
 
   const [activePrivKey, setActivePrivKey] = useState<Uint8Array | null>(null);
-  const [activeVaultConfig, setActiveVaultConfig] = useState<AccountVaultConfig | null>(null);
+  const [activeVaultConfig, setActiveVaultConfig] = useState<AccountVaultConfig | null>(() => {
+    if (typeof window !== "undefined") {
+      const savedCreds = localStorage.getItem("tendon_active_creds");
+      if (savedCreds) {
+        try {
+          const parsed = JSON.parse(savedCreds);
+          if (parsed.alias && parsed.domain) {
+            const vaultKey = `tendon_account_vault_${parsed.alias}@${parsed.domain}`;
+            const saved = localStorage.getItem(vaultKey);
+            if (saved) return JSON.parse(saved);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    return null;
+  });
 
   // Drawer & form interaction states
   const [tempAlias, setTempAlias] = useState("");
@@ -137,11 +154,6 @@ export default function Home() {
       setActiveVaultConfig(null);
     }
   };
-
-  // Load vault configuration when credentials change
-  useEffect(() => {
-    loadActiveVaultConfig();
-  }, [credentials]);
 
   // Email storage state
   const [emails, setEmails] = useState<Email[]>(() => {
@@ -376,14 +388,64 @@ export default function Home() {
 
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const vault = await encryptVault(activePrivKey, key, salt);
-      accountVault.passkeys.push({ credentialIdHex, vault });
+      accountVault.passkeys.push({ 
+        credentialIdHex, 
+        vault,
+        name: passkeyNameInput.trim() || `Passkey ${accountVault.passkeys.length + 1}`,
+        createdDomain: window.location.host,
+        createdAt: Date.now()
+      });
       
       localStorage.setItem(vaultKey, JSON.stringify(accountVault));
       setSuccessMsg("Additional passkey registered successfully!");
+      setPasskeyNameInput("");
+      loadActiveVaultConfig();
     } catch (e) {
       setErrorMsg((e as Error).message || "Failed to add passkey");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRenamePasskey = (credentialIdHex: string, newName: string) => {
+    if (!newName.trim()) return;
+    const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+    const savedVaultRaw = localStorage.getItem(vaultKey);
+    if (!savedVaultRaw) return;
+    try {
+      const accountVault: AccountVaultConfig = JSON.parse(savedVaultRaw);
+      accountVault.passkeys = accountVault.passkeys.map(pk => 
+        pk.credentialIdHex === credentialIdHex ? { ...pk, name: newName.trim() } : pk
+      );
+      localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+      setSuccessMsg("Passkey renamed successfully");
+      loadActiveVaultConfig();
+    } catch {
+      setErrorMsg("Failed to rename passkey");
+    }
+  };
+
+  const handleDeletePasskey = (credentialIdHex: string) => {
+    const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+    const savedVaultRaw = localStorage.getItem(vaultKey);
+    if (!savedVaultRaw) return;
+    try {
+      const accountVault: AccountVaultConfig = JSON.parse(savedVaultRaw);
+      if (accountVault.passkeys.length === 1 && !accountVault.passwordVault) {
+        if (!window.confirm("WARNING: This is your only login method. Removing it may lock you out forever. Continue?")) {
+          return;
+        }
+      } else {
+        if (!window.confirm("Are you sure you want to remove this passkey?")) {
+          return;
+        }
+      }
+      accountVault.passkeys = accountVault.passkeys.filter(pk => pk.credentialIdHex !== credentialIdHex);
+      localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+      setSuccessMsg("Passkey removed successfully");
+      loadActiveVaultConfig();
+    } catch {
+      setErrorMsg("Failed to delete passkey");
     }
   };
 
@@ -649,8 +711,20 @@ export default function Home() {
                   )}
 
                   {authStep === "passkey" && (
-                    <div className="text-xs text-neutral-400 mb-2 leading-relaxed">
-                      Click the button below to initialize biometric/security key approval. Your browser will prompt you to create or approve a passkey.
+                    <div className="flex flex-col gap-3">
+                      <div className="text-xs text-neutral-400 leading-relaxed mb-2">
+                        Specify a name for this passkey and click the button below to initialize biometric/security key approval. Your browser will prompt you to create or approve a passkey.
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-wider">Passkey Name (e.g. Work Laptop)</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Main Passkey"
+                          className="w-full bg-[#161412] border border-white/15 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+                          value={passkeyNameInput}
+                          onChange={(e) => setPasskeyNameInput(e.target.value)}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1017,20 +1091,63 @@ export default function Home() {
               <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 shadow-inner flex flex-col gap-5">
                 <div className="text-xs font-semibold text-[#ededed]">Alternative Unlock Methods</div>
 
+                {/* List registered Passkeys */}
+                {activeVaultConfig && activeVaultConfig.passkeys && activeVaultConfig.passkeys.length > 0 && (
+                  <div className="flex flex-col gap-2.5">
+                    <span className="text-[10px] text-neutral-400 font-semibold uppercase tracking-wider">Registered Passkeys</span>
+                    <div className="flex flex-col gap-2">
+                      {activeVaultConfig.passkeys.map((pk, idx) => (
+                        <div key={pk.credentialIdHex} className="flex items-center justify-between p-3 bg-[#161412] border border-white/5 rounded-xl">
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <span className="text-xs font-semibold text-[#ededed] truncate">{pk.name || `Passkey ${idx + 1}`}</span>
+                            <span className="text-[9px] text-neutral-500 font-mono truncate">Domain: {pk.createdDomain || "Unknown"}</span>
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            <button 
+                              className="text-[10px] bg-white/5 border border-white/5 hover:border-emerald-500/50 hover:text-emerald-400 px-2.5 py-1 rounded cursor-pointer transition-colors"
+                              onClick={() => {
+                                const newName = window.prompt("Enter new name for passkey:", pk.name || `Passkey ${idx + 1}`);
+                                if (newName) handleRenamePasskey(pk.credentialIdHex, newName);
+                              }}
+                            >
+                              Rename
+                            </button>
+                            <button 
+                              className="text-[10px] bg-red-950/20 border border-red-500/30 hover:border-red-500 hover:text-red-400 px-2.5 py-1 rounded cursor-pointer transition-colors"
+                              onClick={() => handleDeletePasskey(pk.credentialIdHex)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Register another Passkey */}
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
                   <span className="text-[10px] text-neutral-400">Add backup passkeys or register a secondary biometric authenticator:</span>
-                  <button
-                    className="bg-[#161412] border border-white/5 text-[#ededed] py-2 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                    onClick={handleAddPasskey}
-                    disabled={isLoading}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <line x1="12" y1="5" x2="12" y2="19" />
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                    <span>Register Additional Passkey</span>
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <input
+                      type="text"
+                      placeholder="Passkey name (e.g. YubiKey)"
+                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] outline-none focus:border-emerald-500/50 font-mono"
+                      value={passkeyNameInput}
+                      onChange={(e) => setPasskeyNameInput(e.target.value)}
+                    />
+                    <button
+                      className="bg-[#161412] border border-white/5 text-[#ededed] py-2.5 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                      onClick={handleAddPasskey}
+                      disabled={isLoading}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      <span>Register Additional Passkey</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Set Password Unlock */}
