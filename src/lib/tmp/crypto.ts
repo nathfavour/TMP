@@ -1,8 +1,8 @@
-import { schnorr } from "@noble/curves/secp256k1";
-import { sha256 } from "@noble/hashes/sha256";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bech32 } from "bech32";
 import { generateMnemonic, mnemonicToSeedSync } from "@scure/bip39";
-import { wordlist } from "@scure/bip39/wordlists/english";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 // Encrypted Vault model
 export interface EncryptedVault {
@@ -54,7 +54,7 @@ export function nsecToBytes(nsec: string): Uint8Array {
 export async function encryptVault(privateKeyBytes: Uint8Array, keyBytes: Uint8Array, saltBytes: Uint8Array): Promise<EncryptedVault> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes as unknown as BufferSource,
     { name: "AES-GCM" },
     false,
     ["encrypt"]
@@ -64,7 +64,7 @@ export async function encryptVault(privateKeyBytes: Uint8Array, keyBytes: Uint8A
   const ciphertextBuffer = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     cryptoKey,
-    privateKeyBytes
+    privateKeyBytes as unknown as BufferSource
   );
 
   return {
@@ -78,16 +78,16 @@ export async function encryptVault(privateKeyBytes: Uint8Array, keyBytes: Uint8A
 export async function decryptVault(vault: EncryptedVault, keyBytes: Uint8Array): Promise<Uint8Array> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes as unknown as BufferSource,
     { name: "AES-GCM" },
     false,
     ["decrypt"]
   );
 
   const decryptedBuffer = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: hexToBytes(vault.iv) },
+    { name: "AES-GCM", iv: hexToBytes(vault.iv) as unknown as BufferSource },
     cryptoKey,
-    hexToBytes(vault.ciphertext)
+    hexToBytes(vault.ciphertext) as unknown as BufferSource
   );
 
   return new Uint8Array(decryptedBuffer);
