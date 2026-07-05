@@ -41,6 +41,7 @@ interface AccountVaultConfig {
   }[];
   passwordVault?: EncryptedVault;
   mnemonicVault?: EncryptedVault;
+  encryptedMnemonic?: EncryptedVault;
 }
 
 const DEFAULT_RELAYS = [
@@ -142,6 +143,7 @@ export default function Home() {
   const [mnemonicInput, setMnemonicInput] = useState("");
   const [isMnemonicDrawerOpen, setIsMnemonicDrawerOpen] = useState(false);
   const [activeMnemonicBackup, setActiveMnemonicBackup] = useState("");
+  const [generatedMnemonic, setGeneratedMnemonic] = useState("");
   const [isCheckingPasswordOnchain, setIsCheckingPasswordOnchain] = useState(false);
   const [passwordExistsOnchain, setPasswordExistsOnchain] = useState<boolean | null>(null);
   const [resolvedUsername, setResolvedUsername] = useState("");
@@ -188,17 +190,23 @@ export default function Home() {
               setIsAliasTaken(false);
               setResolvedUsername("");
               setSearchedNpubHint("");
+              const { createNewMnemonic } = await import("@/lib/tmp/crypto");
+              setGeneratedMnemonic((prev) => prev || createNewMnemonic());
             }
           }
         } else {
           setIsAliasTaken(false);
           setResolvedUsername("");
           setSearchedNpubHint("");
+          const { createNewMnemonic } = await import("@/lib/tmp/crypto");
+          setGeneratedMnemonic((prev) => prev || createNewMnemonic());
         }
       } catch {
         setIsAliasTaken(false);
         setResolvedUsername("");
         setSearchedNpubHint("");
+        const { createNewMnemonic } = await import("@/lib/tmp/crypto");
+        setGeneratedMnemonic((prev) => prev || createNewMnemonic());
       }
     }, 250);
 
@@ -441,13 +449,24 @@ export default function Home() {
           privateKeyBytes = await decryptVault(matched.vault, key);
         } else {
           // Register new passkey
-          const { registerPasskey } = await import("@/lib/tmp/crypto");
+          const { registerPasskey, deriveKeyFromMnemonic, sha256 } = await import("@/lib/tmp/crypto");
           const { key, credentialIdHex } = await registerPasskey(alias);
           
-          privateKeyBytes = generateRandomPrivkey();
+          if (!generatedMnemonic) {
+            throw new Error("No recovery phrase was generated. Please refresh and try again.");
+          }
+
+          // Derive private key directly from generated root mnemonic
+          privateKeyBytes = deriveKeyFromMnemonic(generatedMnemonic);
           const salt = crypto.getRandomValues(new Uint8Array(16));
           const vault = await encryptVault(privateKeyBytes, key, salt);
           
+          // Encrypt root mnemonic text using private key hash for future retrieval in settings
+          const privKeyHash = new Uint8Array(sha256(privateKeyBytes).slice(0, 32));
+          const mSalt = crypto.getRandomValues(new Uint8Array(16));
+          const encMnemonic = await encryptVault(new TextEncoder().encode(generatedMnemonic), privKeyHash, mSalt);
+          accountVault.encryptedMnemonic = encMnemonic;
+
           const randHex = bytesToHex(crypto.getRandomValues(new Uint8Array(3)));
           const timestamp = new Date().getTime();
 
@@ -756,28 +775,47 @@ export default function Home() {
     setSuccessMsg("");
     setErrorMsg("");
     try {
-      const { createNewMnemonic, deriveKeyFromMnemonic } = await import("@/lib/tmp/crypto");
-      const mnemonic = createNewMnemonic();
-      
       const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
       const savedVaultRaw = localStorage.getItem(vaultKey);
       const accountVault: AccountVaultConfig = savedVaultRaw 
         ? JSON.parse(savedVaultRaw) 
         : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
 
-      const seedKey = deriveKeyFromMnemonic(mnemonic);
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const vault = await encryptVault(activePrivKey, seedKey, salt);
-      accountVault.mnemonicVault = vault;
-      
-      localStorage.setItem(vaultKey, JSON.stringify(accountVault));
-      await publishVaultToRelays(accountVault, activePrivKey);
-      setActiveMnemonicBackup(mnemonic);
-      setIsMnemonicDrawerOpen(true);
-      setSuccessMsg("Mnemonic recovery phrase backup generated successfully!");
+      // 1. If we have a saved encrypted root mnemonic, decrypt it!
+      if (accountVault.encryptedMnemonic) {
+        const { sha256 } = await import("@/lib/tmp/crypto");
+        const privKeyHash = new Uint8Array(sha256(activePrivKey).slice(0, 32));
+        const decryptedBytes = await decryptVault(accountVault.encryptedMnemonic, privKeyHash);
+        const mnemonic = new TextDecoder().decode(decryptedBytes);
+        setActiveMnemonicBackup(mnemonic);
+        setIsMnemonicDrawerOpen(true);
+        setSuccessMsg("Root recovery phrase decrypted successfully!");
+      } else {
+        // Fallback for legacy accounts: Generate a new mnemonic and wrap existing key
+        const { createNewMnemonic, deriveKeyFromMnemonic, sha256 } = await import("@/lib/tmp/crypto");
+        const mnemonic = createNewMnemonic();
+        
+        const seedKey = deriveKeyFromMnemonic(mnemonic);
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const vault = await encryptVault(activePrivKey, seedKey, salt);
+        accountVault.mnemonicVault = vault;
+        
+        // Also encrypt this fallback mnemonic so we can decrypt it directly next time!
+        const privKeyHash = new Uint8Array(sha256(activePrivKey).slice(0, 32));
+        const mSalt = crypto.getRandomValues(new Uint8Array(16));
+        const encMnemonic = await encryptVault(new TextEncoder().encode(mnemonic), privKeyHash, mSalt);
+        accountVault.encryptedMnemonic = encMnemonic;
+
+        localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+        await publishVaultToRelays(accountVault, activePrivKey);
+        
+        setActiveMnemonicBackup(mnemonic);
+        setIsMnemonicDrawerOpen(true);
+        setSuccessMsg("Mnemonic recovery phrase backup generated successfully!");
+      }
       loadActiveVaultConfig();
     } catch (e) {
-      setErrorMsg((e as Error).message || "Failed to generate recovery phrase");
+      setErrorMsg((e as Error).message || "Failed to decrypt or generate recovery phrase");
     } finally {
       setIsLoading(false);
     }
@@ -1001,6 +1039,7 @@ export default function Home() {
                             setIsAliasTaken(null);
                             setResolvedUsername("");
                             setSearchedNpubHint("");
+                            setGeneratedMnemonic("");
                           }
                         }}
                       />
@@ -1065,6 +1104,30 @@ export default function Home() {
                       value={mnemonicInput}
                       onChange={(e) => setMnemonicInput(e.target.value)}
                     />
+                  </div>
+                </div>
+              )}
+
+              {/* Show generated recovery phrase during minting / registration */}
+              {!credentials.alias && isAliasTaken === false && generatedMnemonic && (
+                <div className="flex flex-col gap-2 mt-2 p-4 bg-emerald-950/20 border border-emerald-500/20 rounded-xl animate-fadeIn">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider font-bold">Your Root Recovery Phrase (BIP-39)</span>
+                    <button 
+                      className="text-[9px] text-neutral-400 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => {
+                        navigator.clipboard.writeText(generatedMnemonic);
+                        alert("Copied recovery phrase!");
+                      }}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-[#a3a3a3] leading-relaxed">
+                    This phrase is the root cryptographic key of your mailbox. Save it offline. It cannot be recovered if lost.
+                  </p>
+                  <div className="font-mono text-xs text-emerald-400 bg-[#0b0a09] p-3 rounded-lg border border-white/5 break-words select-all select-text font-bold">
+                    {generatedMnemonic}
                   </div>
                 </div>
               )}
