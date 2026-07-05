@@ -126,6 +126,12 @@ export default function Home() {
     return null;
   });
 
+  const getDomainBaseUrl = (domainName: string): string => {
+    const d = domainName.trim();
+    const scheme = d.includes("localhost") || d.includes("127.0.0.1") || d.includes(":") ? "http" : "https";
+    return `${scheme}://${d}`;
+  };
+
   // Drawer & form interaction states
   const [tempAlias, setTempAlias] = useState("");
   const [tempDomain] = useState(() => {
@@ -183,8 +189,7 @@ export default function Home() {
     const timer = setTimeout(async () => {
       try {
         const domain = typeof window !== "undefined" ? window.location.host : "localhost:5003";
-        const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
-        const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json?t=${new Date().getTime()}`, {
+        const response = await fetch(`${getDomainBaseUrl(domain)}/.well-known/tendon.json?t=${new Date().getTime()}`, {
           headers: { "Cache-Control": "no-cache" }
         });
         if (response.ok) {
@@ -269,8 +274,7 @@ export default function Home() {
   const loadDirectoryNames = async () => {
     try {
       const domain = credentials.domain || window.location.host;
-      const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
-      const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json?t=${Date.now()}`, {
+      const response = await fetch(`${getDomainBaseUrl(domain)}/.well-known/tendon.json?t=${new Date().getTime()}`, {
         headers: { "Cache-Control": "no-cache" }
       });
       if (response.ok) {
@@ -459,7 +463,7 @@ export default function Home() {
             const { npubToBytes } = await import("@/lib/tmp/crypto");
             hexPub = bytesToHex(npubToBytes(alias));
           } else if (domain) {
-            const registryResponse = await fetch(`http://${domain}/.well-known/tendon.json?t=${new Date().getTime()}`, {
+            const registryResponse = await fetch(`${getDomainBaseUrl(domain)}/.well-known/tendon.json?t=${new Date().getTime()}`, {
               headers: { "Cache-Control": "no-cache" }
             });
             if (registryResponse.ok) {
@@ -493,7 +497,35 @@ export default function Home() {
         methodUsed = "Passkey";
         const { loginPasskey } = await import("@/lib/tmp/crypto");
         
-        if (isAliasTaken === true || accountVault.passkeys.length > 0) {
+        if (!alias) {
+          // Username-free passkey signin: Query browser WebAuthn credentials without allowedIds list
+          const { key, credentialIdHex } = await loginPasskey([]);
+          const indexRaw = localStorage.getItem("tendon_passkey_index");
+          const passkeyIndex = indexRaw ? JSON.parse(indexRaw) : {};
+          const identity = passkeyIndex[credentialIdHex];
+          if (!identity) {
+            throw new Error("No registered identity found for this passkey on this device. Try logging in with your Recovery Phrase first.");
+          }
+          alias = identity.alias;
+          domain = identity.domain;
+          vaultKey = domain ? `tendon_account_vault_${alias}@${domain}` : `tendon_account_vault_${alias}`;
+          
+          const saved = localStorage.getItem(vaultKey);
+          if (saved) {
+            accountVault = JSON.parse(saved);
+          } else {
+            throw new Error("Vault config cache missing for this passkey. Please sign in via Recovery Phrase to restore.");
+          }
+
+          let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
+          if (!matched && accountVault.passkeys.length > 0) {
+            matched = accountVault.passkeys[0];
+          }
+          if (!matched) {
+            throw new Error("Local passkey vault credentials not found in vault.");
+          }
+          privateKeyBytes = await decryptVault(matched.vault, key);
+        } else if (isAliasTaken === true || accountVault.passkeys.length > 0) {
           // Select list of credential IDs
           const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
           const { key, credentialIdHex } = await loginPasskey(allowedIds);
@@ -509,6 +541,14 @@ export default function Home() {
           }
           
           privateKeyBytes = await decryptVault(matched.vault, key);
+
+          // Update local index cache
+          const pubKey = getPubkeyFromPrivkey(privateKeyBytes);
+          const npub = bytesToNpub(pubKey);
+          const indexRaw = localStorage.getItem("tendon_passkey_index");
+          const passkeyIndex = indexRaw ? JSON.parse(indexRaw) : {};
+          passkeyIndex[credentialIdHex] = { alias, domain, npub };
+          localStorage.setItem("tendon_passkey_index", JSON.stringify(passkeyIndex));
         } else {
           // Register new passkey
           const { registerPasskey, deriveKeyFromMnemonic, createNewMnemonic, sha256 } = await import("@/lib/tmp/crypto");
@@ -530,6 +570,15 @@ export default function Home() {
 
           const randHex = bytesToHex(crypto.getRandomValues(new Uint8Array(3)));
           const timestamp = new Date().getTime();
+
+          const pubKey = getPubkeyFromPrivkey(privateKeyBytes);
+          const npub = bytesToNpub(pubKey);
+
+          // Update local index cache
+          const indexRaw = localStorage.getItem("tendon_passkey_index");
+          const passkeyIndex = indexRaw ? JSON.parse(indexRaw) : {};
+          passkeyIndex[credentialIdHex] = { alias, domain, npub };
+          localStorage.setItem("tendon_passkey_index", JSON.stringify(passkeyIndex));
 
           accountVault.passkeys.push({ 
             credentialIdHex, 
@@ -601,7 +650,7 @@ export default function Home() {
         if (!resolvedAlias) {
           const searchDomain = tempDomain || window.location.host;
           try {
-            const res = await fetch(`http://${searchDomain}/.well-known/tendon.json?t=${new Date().getTime()}`);
+            const res = await fetch(`${getDomainBaseUrl(searchDomain)}/.well-known/tendon.json?t=${new Date().getTime()}`);
             if (res.ok) {
               const regData = await res.json();
               const v31Records = (regData.names_v31 || {}) as Record<string, { npub: string; signature: string }>;
@@ -665,7 +714,7 @@ export default function Home() {
       // Register identity on the local tendon.json endpoint if domain is active
       if (domain) {
         try {
-          await fetch(`http://${domain}/.well-known/tendon.json`, {
+          await fetch(`${getDomainBaseUrl(domain)}/.well-known/tendon.json`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ username: alias, npub }),
@@ -913,8 +962,7 @@ export default function Home() {
     setPasswordExistsOnchain(null);
     try {
       const domain = credentials.domain.trim().toLowerCase();
-      const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
-      const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
+      const response = await fetch(`${getDomainBaseUrl(domain)}/.well-known/tendon.json`);
       if (response.ok) {
         const data = await response.json();
         const hasOnchainSalt = !!data.vault_pointer?.argon2_salt;
@@ -994,8 +1042,7 @@ export default function Home() {
       // 0. Notify directory server to deregister the username mapping
       try {
         const domain = credentials.domain || window.location.host;
-        const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
-        await fetch(`${scheme}://${domain}/.well-known/tendon.json`, {
+        await fetch(`${getDomainBaseUrl(domain)}/.well-known/tendon.json`, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ username: credentials.alias }),
@@ -1254,6 +1301,11 @@ export default function Home() {
                         }}
                       />
                     </div>
+                    {tempAlias.trim() === "" && loginMethod === "passkey" && (
+                      <div className="text-[10px] text-neutral-400 mt-1 font-mono">
+                        Tip: Leave username blank to select from existing passkeys on this device.
+                      </div>
+                    )}
                     {aliasError && (
                       <div className="text-amber-500 text-[10px] leading-relaxed mt-1 animate-fadeIn font-semibold">
                         {aliasError}
@@ -1329,11 +1381,11 @@ export default function Home() {
               <button
                 className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
                 onClick={() => {
-                  if (!credentials.alias && loginMethod !== "mnemonic" && !tempAlias.trim()) {
+                  if (!credentials.alias && loginMethod !== "mnemonic" && loginMethod !== "passkey" && !tempAlias.trim()) {
                     setErrorMsg("Please enter a username alias first");
                     return;
                   }
-                  if (!credentials.alias && loginMethod !== "mnemonic" && getAliasValidationError(tempAlias)) {
+                  if (!credentials.alias && loginMethod !== "mnemonic" && tempAlias.trim() !== "" && getAliasValidationError(tempAlias)) {
                     setErrorMsg("Please resolve username validation warnings first");
                     return;
                   }
@@ -1365,35 +1417,46 @@ export default function Home() {
                     ? "CONNECTING..." 
                     : credentials.alias 
                       ? "UNLOCK WITH PASSKEY" 
-                      : isAliasTaken === true 
-                        ? (loginMethod === "password" ? "SIGN IN WITH PASSWORD" : loginMethod === "mnemonic" ? "SIGN IN WITH PHRASE" : "SIGN IN WITH PASSKEY")
-                        : (loginMethod === "password" ? "MINT WITH PASSWORD" : loginMethod === "mnemonic" ? "MINT WITH PHRASE" : "MINT WITH PASSKEY")}
+                      : !tempAlias.trim() && loginMethod === "passkey"
+                        ? "SIGN IN WITH PASSKEY"
+                        : isAliasTaken === true 
+                          ? (loginMethod === "password" ? "SIGN IN WITH PASSWORD" : loginMethod === "mnemonic" ? "SIGN IN WITH PHRASE" : "SIGN IN WITH PASSKEY")
+                          : (loginMethod === "password" ? "MINT WITH PASSWORD" : loginMethod === "mnemonic" ? "MINT WITH PHRASE" : "MINT WITH PASSKEY")}
                 </span>
               </button>
 
-              {/* Alternative method toggles (only when username/npub is typed) */}
-              {!credentials.alias && isAliasTaken !== null && (
-                <div className="flex justify-center gap-4 mt-2">
+              {/* Alternative method toggles (always visible when logged out) */}
+              {!credentials.alias && (
+                <div className="flex justify-center gap-4 mt-3 pt-3 border-t border-white/5">
                   {loginMethod !== "passkey" && (
                     <button
-                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
-                      onClick={() => setLoginMethod("passkey")}
+                      className="text-[10px] text-neutral-400 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => {
+                        setLoginMethod("passkey");
+                        setErrorMsg("");
+                      }}
                     >
                       Use Passkey
                     </button>
                   )}
                   {loginMethod !== "password" && (
                     <button
-                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
-                      onClick={() => setLoginMethod("password")}
+                      className="text-[10px] text-neutral-400 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => {
+                        setLoginMethod("password");
+                        setErrorMsg("");
+                      }}
                     >
                       Use Password
                     </button>
                   )}
                   {loginMethod !== "mnemonic" && (
                     <button
-                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
-                      onClick={() => setLoginMethod("mnemonic")}
+                      className="text-[10px] text-neutral-400 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => {
+                        setLoginMethod("mnemonic");
+                        setErrorMsg("");
+                      }}
                     >
                       Use Phrase
                     </button>
