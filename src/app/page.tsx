@@ -380,15 +380,15 @@ export default function Home() {
     setErrorMsg("");
     try {
       const alias = (credentials.alias || resolvedUsername || tempAlias).trim().toLowerCase();
-      const domain = (credentials.domain || tempDomain).trim();
-      if (!alias || !domain) {
-        throw new Error("Alias and domain must not be empty");
+      const domain = (credentials.domain || tempDomain || "").trim();
+      if (!alias) {
+        throw new Error("Alias must not be empty");
       }
 
       let privateKeyBytes: Uint8Array;
       let methodUsed: typeof credentials.authMethod = "None";
 
-      const vaultKey = `tendon_account_vault_${alias}@${domain}`;
+      const vaultKey = domain ? `tendon_account_vault_${alias}@${domain}` : `tendon_account_vault_${alias}`;
       const savedVaultRaw = localStorage.getItem(vaultKey);
       let accountVault: AccountVaultConfig = savedVaultRaw 
         ? JSON.parse(savedVaultRaw) 
@@ -401,7 +401,7 @@ export default function Home() {
           if (alias.startsWith("npub1")) {
             const { npubToBytes } = await import("@/lib/tmp/crypto");
             hexPub = bytesToHex(npubToBytes(alias));
-          } else {
+          } else if (domain) {
             const registryResponse = await fetch(`http://${domain}/.well-known/tendon.json`);
             if (registryResponse.ok) {
               const regData = await registryResponse.json();
@@ -530,15 +530,17 @@ export default function Home() {
       const pubKey = getPubkeyFromPrivkey(privateKeyBytes);
       const npub = bytesToNpub(pubKey);
 
-      // Register identity on the local tendon.json endpoint
-      try {
-        await fetch(`http://${domain}/.well-known/tendon.json`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: alias, npub }),
-        });
-      } catch (e) {
-        console.warn("Could not register identity on local tendon.json server:", e);
+      // Register identity on the local tendon.json endpoint if domain is active
+      if (domain) {
+        try {
+          await fetch(`http://${domain}/.well-known/tendon.json`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: alias, npub }),
+          });
+        } catch (e) {
+          console.warn("Could not register identity on local tendon.json server:", e);
+        }
       }
 
       const activeCreds = { npub, alias, authMethod: methodUsed, domain };
@@ -830,18 +832,65 @@ export default function Home() {
     setSuccessMsg("");
     setErrorMsg("");
     try {
-      // 1. Delete local vaults
+      // 0. Notify directory server to deregister the username mapping
+      try {
+        const domain = credentials.domain || window.location.host;
+        const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
+        await fetch(`${scheme}://${domain}/.well-known/tendon.json`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: credentials.alias }),
+        });
+      } catch (err) {
+        console.warn("Could not notify directory server to free username:", err);
+      }
+
+      // 1. Wipe remote vault on Nostr relays by overwriting with empty config and publishing NIP-09 deletion event
+      if (activePrivKey) {
+        try {
+          const myHexPub = bytesToHex(getPubkeyFromPrivkey(activePrivKey));
+          
+          const overwriteEvent = signEvent({
+            pubkey: myHexPub,
+            created_at: Math.floor(Date.now() / 1000),
+            kind: 30078,
+            tags: [["d", "tendon-mailbox-vault"]],
+            content: JSON.stringify({ alias: credentials.alias, domain: credentials.domain, passkeys: [] }),
+          }, activePrivKey);
+
+          const deleteEvent = signEvent({
+            pubkey: myHexPub,
+            created_at: Math.floor(Date.now() / 1000) + 1,
+            kind: 5,
+            tags: [["a", `30078:${myHexPub}:tendon-mailbox-vault`]],
+            content: "Account deletion request",
+          }, activePrivKey);
+
+          if (relayPoolRef.current) {
+            await relayPoolRef.current.publish(overwriteEvent);
+            await relayPoolRef.current.publish(deleteEvent);
+            console.log("Published empty vault overwrite and NIP-09 deletion events to relays.");
+          }
+        } catch (err) {
+          console.warn("Could not wipe remote vault from relays:", err);
+        }
+      }
+
+      // 2. Delete local vaults and cached application states
       const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
       localStorage.removeItem(vaultKey);
+      localStorage.removeItem("tendon_emails_cache");
+      localStorage.removeItem("tendon_active_creds");
 
-      // 2. Clear ephemeral session data
+      // 3. Clear ephemeral session data
       sessionStorage.removeItem("tendon_active_privkey");
       sessionStorage.removeItem("tendon_active_npub");
       sessionStorage.removeItem("tendon_active_alias");
       sessionStorage.removeItem("tendon_active_domain");
 
-      // 3. Reset react application states
+      // 4. Reset react application states
       setActivePrivKey(null);
+      setEmails([]);
       setCredentials({ alias: "", domain: "", npub: "", authMethod: "None" });
       setIsDeleteAccountDrawerOpen(false);
       setDeleteConfirmUsername("");

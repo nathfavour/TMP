@@ -64,12 +64,32 @@ export async function POST(request: Request) {
   }
 }
 
+export async function DELETE(request: Request) {
+  try {
+    const { username } = await request.json();
+    if (!username) {
+      return NextResponse.json({ error: "Missing username" }, { status: 400 });
+    }
+
+    const cleanUsername = username.trim().toLowerCase();
+    const dir = readDirectory();
+    if (dir[cleanUsername]) {
+      delete dir[cleanUsername];
+      writeDirectory(dir);
+      return NextResponse.json({ success: true, message: `Username ${cleanUsername} deleted` });
+    }
+    return NextResponse.json({ error: "Username not found" }, { status: 404 });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
 export async function OPTIONS() {
   return new Response(null, {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     }
   });

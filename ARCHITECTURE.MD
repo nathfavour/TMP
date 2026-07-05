@@ -13,42 +13,41 @@ TMP operates under four structural invariants:
 
 ## 2. Cryptographic Identity & Authentication Matrix
 
-Identity is rooted in a standard asymmetric Secp256k1 keypair, where the public key (`npub`) serves as the cryptographic destination address. The Master Private Key (`nsec`) is sealed within a client-side encrypted vault container, hydrated into a memory-pinned location via three mutually independent local authentication vectors.
+Identity is deterministically rooted in a standard BIP-39 Mnemonic recovery phrase. The Master Private Key (`nsec`) is derived mathematically from the mnemonic's binary seed entropy. During client enrollment, this root private key and mnemonic are encrypted inside the Tendon Vault Container and wrapped by hardware-backed passkeys or client-side passwords.
 
 ```text
-      +───────────────────────────────────────────────────+
-      |         Tendon Encrypted Vault Container         |
-      |  [ AES-GCM Encrypted Master Private Key (nsec) ] |
-      +─────────────────────────▲─────────────────────────+
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        │                       │                       │
- [ Pathway 1: Passkey ]  [ Pathway 2: Password ] [ Pathway 3: Mnemonic ]
-   WebAuthn PRF Seed       Argon2id Client Hash    BIP-39 Mnemonic Seed
+               +───────────────────────────────────────────────────+
+               |        Deterministic BIP-39 Root Mnemonic         |
+               +─────────────────────────┬─────────────────────────+
+                                         │
+                                         ▼
+               +───────────────────────────────────────────────────+
+               |         Master Secp256k1 Private Key (nsec)       |
+               +─────────────────────────┬─────────────────────────+
+                                         │ Wrapped / Encrypted By
+                        ┌────────────────┴────────────────┐
+                        ▼                                 ▼
+              [ Pathway 1: Passkey ]           [ Pathway 2: Password ]
+                WebAuthn PRF Seed                Argon2id Client Hash
 ```
 
-### 2.1 The 3-Tier Key Wrapping Vault Matrix
+### 2.1 The Root Identity & Key Wrapping Vault Matrix
 
-#### Pathway 1: WebAuthn Passkey (Hardware Boundary)
+#### Pathway 1: Deterministic Root Mnemonic (Cryptographic Foundation)
+- A standard 12-word human-readable recovery phrase generated on account creation.
+- **Mechanism**: The client maps the phrase back to its underlying binary entropy seed via BIP-39 to derive the raw Secp256k1 keypair. It represents the ultimate, device-independent root identity. On new devices, entering the phrase derives the key directly without requiring prior local or remote vault configuration blobs.
+
+#### Pathway 2: WebAuthn Passkey (Hardware Access Wrapper)
 - Utilizes the WebAuthn API with the Pseudo-Random Function (PRF) Extension to generate hardware-backed keys.
-- **Mechanism**: The application client makes a hardware authorization call to the host system's secure enclave (for example Apple Secure Enclave or Titan M-series chip) using a deterministic application salt string (`textEncoder.encode("tendon-v3-prf-salt")`).
-- **Output**: The enclave outputs a stable, high-entropy 32-byte symmetric key (`K_passkey`). This key is fed into an AES-256-GCM decryption pipeline to unwrap the Master Vault Container entirely inside local client memory boundaries.
+- **Mechanism**: The client makes a hardware authorization call to the host system's secure enclave (e.g., Apple Secure Enclave, Titan M) using a deterministic application salt.
+- **Output**: The enclave outputs a stable, high-entropy 32-byte symmetric key (`K_passkey`). This key is used with AES-256-GCM to unwrap the local/remote vault and retrieve the root key and mnemonic text.
 
-#### Pathway 2: Client-Side Argon2id Password (Portability Layer)
-- Provides environmental migration capabilities across operating systems or platforms lacking biometric/hardware synchronization channels.
-- **Mechanism**: The user provides their password alongside an unencrypted, unique random 16-byte salt value (`S_random`) retrieved during system bootstrap.
-- **Execution**: The client engine executes an Argon2id implementation compiled to a WebAssembly (WASM) background worker thread using the following cryptographic parameters:
-
-```text
-Key_password = Argon2id(password, salt=S_random, m=65536, t=3, p=4)
-```
-
-- **Security Bounds**: The 64MB memory footprint, 3 time iterations, and 4 parallel execution lanes are strictly computed on the edge machine. The explicit generation of a unique random salt ensures resistance against targeted dictionary pre-computation attacks, even if the user's public address or vault file is leaked from an open relay.
-- **Mobile WASM Fallback Matrix**: Because multi-threaded execution (`p=4`) depends on `SharedArrayBuffer` (which requires COOP/COEP headers to be set by the hosting server), runtimes operating on static endpoints (e.g. basic GitHub Pages) MUST support a single-threaded fallback mode. In this mode, execution parameters dynamically adapt (`p=1`, `m=32768`, `t=1` to `t=2`) to guarantee key derivation finishes in under 2 seconds on mobile web environments without falling below secure entropy boundaries.
-
-#### Pathway 3: BIP-39 Recovery Phrase (Absolute Fallback)
-- A standard 12 or 24-word human-readable mnemonic seed block.
-- The client maps the phrase back to its underlying binary entropy array to reconstruct the raw Secp256k1 keypair mathematically, functioning as the definitive recovery override.
+#### Pathway 3: Client-Side Argon2id Password (Portability Wrapper)
+- Provides environmental migration capabilities across operating systems lacking hardware biometric synchronization.
+- **Mechanism**: The user provides a password alongside a unique random 16-byte salt (`S_random`).
+- **Execution**: The client executes an Argon2id Wasm worker with parameters:
+  `Key_password = Argon2id(password, salt=S_random, m=65536, t=3, p=4)`
+- **Mobile Fallback**: Runtimes adapt to single-threaded mode (`p=1`, `m=32768`, `t=1` to `t=2`) when multi-threading dependencies (`SharedArrayBuffer`) are unavailable. The derived key unwraps the vault to recover the root private key.
 
 ## 3. Global Identity Verification & Discovery Engine (Static-Pointer Identity Layer)
 
