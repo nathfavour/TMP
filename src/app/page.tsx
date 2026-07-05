@@ -140,6 +140,7 @@ export default function Home() {
   const [loginMethod, setLoginMethod] = useState<"passkey" | "password">("passkey");
   const [isCheckingPasswordOnchain, setIsCheckingPasswordOnchain] = useState(false);
   const [passwordExistsOnchain, setPasswordExistsOnchain] = useState<boolean | null>(null);
+  const [resolvedUsername, setResolvedUsername] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -148,8 +149,8 @@ export default function Home() {
   const [isAliasTaken, setIsAliasTaken] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const alias = tempAlias.trim().toLowerCase();
-    if (!alias) return;
+    const input = tempAlias.trim();
+    if (!input) return;
 
     const timer = setTimeout(async () => {
       try {
@@ -158,16 +159,33 @@ export default function Home() {
         const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
         if (response.ok) {
           const data = await response.json();
-          if (data.names && data.names[alias]) {
-            setIsAliasTaken(true);
+          if (input.startsWith("npub1")) {
+            const foundEntry = Object.entries(data.names || {}).find(([, npub]) => npub === input);
+            if (foundEntry) {
+              const [name] = foundEntry;
+              setIsAliasTaken(true);
+              setResolvedUsername(name);
+            } else {
+              setIsAliasTaken(null);
+              setResolvedUsername("");
+            }
           } else {
-            setIsAliasTaken(false);
+            const alias = input.toLowerCase();
+            if (data.names && data.names[alias]) {
+              setIsAliasTaken(true);
+              setResolvedUsername("");
+            } else {
+              setIsAliasTaken(false);
+              setResolvedUsername("");
+            }
           }
         } else {
           setIsAliasTaken(false);
+          setResolvedUsername("");
         }
       } catch {
         setIsAliasTaken(false);
+        setResolvedUsername("");
       }
     }, 250);
 
@@ -340,7 +358,7 @@ export default function Home() {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      const alias = (credentials.alias || tempAlias).trim().toLowerCase();
+      const alias = (credentials.alias || resolvedUsername || tempAlias).trim().toLowerCase();
       const domain = (credentials.domain || tempDomain).trim();
       if (!alias || !domain) {
         throw new Error("Alias and domain must not be empty");
@@ -782,26 +800,35 @@ export default function Home() {
                           setTempAlias(e.target.value);
                           if (!e.target.value.trim()) {
                             setIsAliasTaken(null);
+                            setResolvedUsername("");
                           }
                         }}
                       />
                     </div>
                     {/* Username taken / available badge */}
                     {tempAlias.trim() !== "" && (
-                      <div className="mt-1 flex items-center gap-1.5 px-1 font-mono text-[9px]">
-                        {isAliasTaken === true ? (
-                          <>
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                            <span className="text-amber-400">Registered username (will trigger login)</span>
-                          </>
-                        ) : isAliasTaken === false ? (
-                          <>
+                      <div className="mt-1 flex flex-col gap-1 px-1 font-mono text-[9px]">
+                        {resolvedUsername && (
+                          <div className="flex items-center gap-1.5 text-emerald-400 font-semibold mb-0.5 animate-fadeIn">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            <span className="text-emerald-400">Username available (will mint new account)</span>
-                          </>
-                        ) : (
-                          <span className="text-neutral-500">Checking availability...</span>
+                            <span>Resolved Identity: {resolvedUsername}</span>
+                          </div>
                         )}
+                        <div className="flex items-center gap-1.5">
+                          {isAliasTaken === true ? (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              <span className="text-amber-400">Registered account (will trigger login)</span>
+                            </>
+                          ) : isAliasTaken === false ? (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                              <span className="text-emerald-400">Username available (will mint new account)</span>
+                            </>
+                          ) : (
+                            <span className="text-neutral-500">Checking availability...</span>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
