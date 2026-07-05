@@ -138,6 +138,34 @@ export default function Home() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [directoryNames, setDirectoryNames] = useState<Record<string, string>>({});
+  const [isAliasTaken, setIsAliasTaken] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const alias = tempAlias.trim().toLowerCase();
+    if (!alias) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const domain = typeof window !== "undefined" ? window.location.host : "localhost:5003";
+        const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
+        const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.names && data.names[alias]) {
+            setIsAliasTaken(true);
+          } else {
+            setIsAliasTaken(false);
+          }
+        } else {
+          setIsAliasTaken(false);
+        }
+      } catch {
+        setIsAliasTaken(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [tempAlias]);
 
   const loadDirectoryNames = async () => {
     try {
@@ -691,9 +719,32 @@ export default function Home() {
                         placeholder="e.g. carol"
                         className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
                         value={tempAlias}
-                        onChange={(e) => setTempAlias(e.target.value)}
+                        onChange={(e) => {
+                          setTempAlias(e.target.value);
+                          if (!e.target.value.trim()) {
+                            setIsAliasTaken(null);
+                          }
+                        }}
                       />
                     </div>
+                    {/* Username taken / available badge */}
+                    {tempAlias.trim() !== "" && (
+                      <div className="mt-1 flex items-center gap-1.5 px-1 font-mono text-[9px]">
+                        {isAliasTaken === true ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            <span className="text-amber-400">Registered username (will trigger login)</span>
+                          </>
+                        ) : isAliasTaken === false ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            <span className="text-emerald-400">Username available (will mint new account)</span>
+                          </>
+                        ) : (
+                          <span className="text-neutral-500">Checking availability...</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -712,7 +763,15 @@ export default function Home() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M12 2a5 5 0 0 0-5 5v4H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zM9 7a3 3 0 0 1 6 0v4H9V7zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
                 </svg>
-                <span>{isLoading ? "CONNECTING..." : credentials.alias ? "UNLOCK WITH PASSKEY" : "CONNECT WITH PASSKEY"}</span>
+                <span>
+                  {isLoading 
+                    ? "CONNECTING..." 
+                    : credentials.alias 
+                      ? "UNLOCK WITH PASSKEY" 
+                      : isAliasTaken === true 
+                        ? "SIGN IN WITH PASSKEY" 
+                        : "MINT WITH PASSKEY"}
+                </span>
               </button>
 
               {credentials.alias && (
