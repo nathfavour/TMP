@@ -1,4 +1,4 @@
-# Tendon Message Protocol (TMP) Architecture Specification v3.0.1
+# Tendon Message Protocol (TMP) Architecture Specification v3.1.0
 
 The Tendon Message Protocol (TMP) is a serverless, client-dense, local-first application-layer protocol designed to unify asynchronous communications (asymmetric unicast email topologies and symmetric multicast chat topologies) over an untrusted, stateless transport layer (Nostr). TMP shifts identity management, access authorization, message indexing, state synchronization, and data serialization entirely to the user's local computing runtime, leveraging public DNS/TLS infrastructure for verifiable global namespaces without centralized database management or ledger consensus.
 

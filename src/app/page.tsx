@@ -1676,8 +1676,19 @@ export default function Home() {
                         <div className="absolute left-0 top-3 bottom-3 w-[2.5px] bg-emerald-400 rounded"></div>
                       )}
                       <div className="flex justify-between items-center mb-1">
-                        <span className="text-xs font-semibold text-[#ededed]">
-                          {email.folder === "drafts" ? `To: ${email.sender || "(No Recipient)"}` : email.senderName}
+                        <span className="text-xs font-semibold text-[#ededed] flex items-center gap-1.5">
+                          {email.folder === "drafts" ? (
+                            `To: ${email.sender || "(No Recipient)"}`
+                          ) : (
+                            <>
+                              <span>{email.senderName}</span>
+                              <span className="text-[10px] text-emerald-400 font-bold font-mono">
+                                ({email.sender.startsWith("npub1") 
+                                  ? `${email.sender.substring(0, 8)}...${email.sender.substring(email.sender.length - 4)}`
+                                  : email.sender.split("@")[0]})
+                              </span>
+                            </>
+                          )}
                         </span>
                         <span className="font-mono text-[9px] text-[#a3a3a3]">{email.time}</span>
                       </div>
