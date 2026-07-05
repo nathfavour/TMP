@@ -442,7 +442,7 @@ export default function Home() {
       let domain = (credentials.domain || tempDomain || "").trim();
       const activeStep = overrideAuthStep || authStep;
 
-      if (!alias && activeStep !== "mnemonic") {
+      if (!alias && activeStep !== "mnemonic" && activeStep !== "passkey") {
         throw new Error("Alias must not be empty");
       }
 
