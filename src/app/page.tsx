@@ -11,6 +11,7 @@ import {
   deriveKeyFromMnemonic,
   createNewMnemonic,
   bytesToHex,
+  type EncryptedVault
 } from "@/lib/tmp/crypto";
 import { resolveIdentifier } from "@/lib/tmp/resolver";
 import { NostrRelayPool, signEvent, type NostrEvent } from "@/lib/tmp/nostr";
@@ -30,6 +31,13 @@ interface Email {
   rawEvent?: NostrEvent;
 }
 
+interface AccountVaultConfig {
+  alias: string;
+  domain: string;
+  passkeys: { credentialIdHex: string; vault: EncryptedVault }[];
+  passwordVault?: EncryptedVault;
+}
+
 const DEFAULT_RELAYS = [
   "wss://relay.damus.io",
   "wss://nos.lol",
@@ -44,6 +52,9 @@ export default function Home() {
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
+
+  // Onboarding wizard
+  const [showOnboarding, setShowOnboarding] = useState(true);
 
   // Credentials State
   const [credentials, setCredentials] = useState<{
@@ -72,13 +83,13 @@ export default function Home() {
 
   const [activePrivKey, setActivePrivKey] = useState<Uint8Array | null>(null);
 
-  // Drawer interaction states
-  const [tempAlias, setTempAlias] = useState("nathfavour");
+  // Drawer & form interaction states
+  const [tempAlias, setTempAlias] = useState("");
   const [tempDomain, setTempDomain] = useState(() => {
     if (typeof window !== "undefined") {
       return window.location.host;
     }
-    return "";
+    return "localhost:5003";
   });
   const [authStep, setAuthStep] = useState<"choose" | "passkey" | "password" | "mnemonic">("choose");
   const [passwordInput, setPasswordInput] = useState("");
@@ -86,6 +97,7 @@ export default function Home() {
   const [generatedMnemonic, setGeneratedMnemonic] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   // Email storage state
   const [emails, setEmails] = useState<Email[]>(() => {
@@ -111,10 +123,12 @@ export default function Home() {
   const [connectedRelays, setConnectedRelays] = useState<number>(0);
   const relayPoolRef = useRef<NostrRelayPool | null>(null);
 
-  // Initialize domain default based on browser window
+  // Auto-hide onboarding if already logged in
   useEffect(() => {
-    // handled in state initializers
-  }, []);
+    if (credentials.npub) {
+      setShowOnboarding(false);
+    }
+  }, [credentials]);
 
   // Save emails to localStorage when updated
   useEffect(() => {
@@ -152,10 +166,8 @@ export default function Home() {
     }, 2000);
 
     pool.addListener((event: NostrEvent) => {
-      // We only care about kind 1059 (unicast envelope wrapper)
       if (event.kind !== 1059) return;
 
-      // Extract the recipient
       const pTag = event.tags.find(t => t[0] === "p")?.[1];
       const isSentByMe = event.pubkey === myHexPub;
       const isForMe = pTag === myHexPub;
@@ -190,7 +202,6 @@ export default function Home() {
       }
     });
 
-    // Subscribe to events where I am the recipient or the sender
     pool.subscribe("my-inbox", [
       { kinds: [1059], "#p": [myHexPub] },
       { kinds: [1059], authors: [myHexPub] }
@@ -217,45 +228,53 @@ export default function Home() {
       let privateKeyBytes: Uint8Array;
       let methodUsed: typeof credentials.authMethod = "None";
 
+      const vaultKey = `tendon_account_vault_${alias}@${domain}`;
+      const savedVaultRaw = localStorage.getItem(vaultKey);
+      let accountVault: AccountVaultConfig = savedVaultRaw 
+        ? JSON.parse(savedVaultRaw) 
+        : { alias, domain, passkeys: [] };
+
       if (authStep === "passkey") {
         methodUsed = "Passkey";
-        const credIdKey = `tendon_passkey_cred_id_${alias}@${domain}`;
-        const vaultKey = `tendon_vault_${alias}@${domain}`;
-        const savedCredId = localStorage.getItem(credIdKey);
+        const { prfKey, loginPasskey } = await import("@/lib/tmp/crypto");
         
-        let prfKey: Uint8Array;
-        if (savedCredId) {
-          // Log in with existing passkey
-          prfKey = await loginPasskey(savedCredId);
-          const savedVault = JSON.parse(localStorage.getItem(vaultKey) || "");
-          privateKeyBytes = await decryptVault(savedVault, prfKey);
+        if (accountVault.passkeys.length > 0) {
+          // Select list of credential IDs
+          const allowedIds = accountVault.passkeys.map(pk => pk.credentialIdHex);
+          const { key, credentialIdHex } = await loginPasskey(allowedIds[0]); // default fallback
+          
+          // Try to authenticate with the chosen one
+          let matched = accountVault.passkeys.find(pk => pk.credentialIdHex === credentialIdHex);
+          if (!matched) {
+            // Find key using derived key directly
+            matched = accountVault.passkeys[0];
+          }
+          
+          privateKeyBytes = await decryptVault(matched.vault, key);
         } else {
           // Register new passkey
+          const { registerPasskey } = await import("@/lib/tmp/crypto");
           const { key, credentialIdHex } = await registerPasskey(alias);
-          prfKey = key;
-          localStorage.setItem(credIdKey, credentialIdHex);
           
-          // Generate new keys and encrypt vault
           privateKeyBytes = generateRandomPrivkey();
           const salt = crypto.getRandomValues(new Uint8Array(16));
-          const vault = await encryptVault(privateKeyBytes, prfKey, salt);
-          localStorage.setItem(vaultKey, JSON.stringify(vault));
+          const vault = await encryptVault(privateKeyBytes, key, salt);
+          
+          accountVault.passkeys.push({ credentialIdHex, vault });
+          localStorage.setItem(vaultKey, JSON.stringify(accountVault));
         }
       } else if (authStep === "password") {
         methodUsed = "Password";
-        const vaultKey = `tendon_vault_${alias}@${domain}`;
-        const savedVaultRaw = localStorage.getItem(vaultKey);
-
-        if (savedVaultRaw) {
-          const savedVault = JSON.parse(savedVaultRaw);
-          const prfKey = await deriveKeyFromPassword(passwordInput, savedVault.salt);
-          privateKeyBytes = await decryptVault(savedVault, prfKey);
+        if (accountVault.passwordVault) {
+          const prfKey = await deriveKeyFromPassword(passwordInput, accountVault.passwordVault.salt);
+          privateKeyBytes = await decryptVault(accountVault.passwordVault, prfKey);
         } else {
           privateKeyBytes = generateRandomPrivkey();
           const salt = crypto.getRandomValues(new Uint8Array(16));
           const prfKey = await deriveKeyFromPassword(passwordInput, bytesToHex(salt));
           const vault = await encryptVault(privateKeyBytes, prfKey, salt);
-          localStorage.setItem(vaultKey, JSON.stringify(vault));
+          accountVault.passwordVault = vault;
+          localStorage.setItem(vaultKey, JSON.stringify(accountVault));
         }
       } else if (authStep === "mnemonic") {
         methodUsed = "Mnemonic";
@@ -270,7 +289,7 @@ export default function Home() {
       const pubKey = getPubkeyFromPrivkey(privateKeyBytes);
       const npub = bytesToNpub(pubKey);
 
-      // Register identity on the local tendon.json endpoint if on this domain
+      // Register identity on the local tendon.json endpoint
       try {
         await fetch(`http://${domain}/.well-known/tendon.json`, {
           method: "POST",
@@ -286,9 +305,67 @@ export default function Home() {
       setActivePrivKey(privateKeyBytes);
       localStorage.setItem("tendon_active_creds", JSON.stringify(activeCreds));
       setIsConnectDrawerOpen(false);
+      setShowOnboarding(false);
     } catch (e) {
       console.error(e);
       setErrorMsg((e as Error).message || "Decryption or authentication failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add alternative passkey method
+  const handleAddPasskey = async () => {
+    if (!activePrivKey || !credentials.npub) return;
+    setIsLoading(true);
+    setSuccessMsg("");
+    setErrorMsg("");
+    try {
+      const { registerPasskey } = await import("@/lib/tmp/crypto");
+      const { key, credentialIdHex } = await registerPasskey(credentials.alias);
+
+      const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+      const savedVaultRaw = localStorage.getItem(vaultKey);
+      let accountVault: AccountVaultConfig = savedVaultRaw 
+        ? JSON.parse(savedVaultRaw) 
+        : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
+
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const vault = await encryptVault(activePrivKey, key, salt);
+      accountVault.passkeys.push({ credentialIdHex, vault });
+      
+      localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+      setSuccessMsg("Additional passkey registered successfully!");
+    } catch (e) {
+      setErrorMsg((e as Error).message || "Failed to add passkey");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Set password unlock method
+  const handleSetPasswordUnlock = async () => {
+    if (!activePrivKey || !credentials.npub || !passwordInput) return;
+    setIsLoading(true);
+    setSuccessMsg("");
+    setErrorMsg("");
+    try {
+      const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+      const savedVaultRaw = localStorage.getItem(vaultKey);
+      let accountVault: AccountVaultConfig = savedVaultRaw 
+        ? JSON.parse(savedVaultRaw) 
+        : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
+
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const prfKey = await deriveKeyFromPassword(passwordInput, bytesToHex(salt));
+      const vault = await encryptVault(activePrivKey, prfKey, salt);
+      accountVault.passwordVault = vault;
+      
+      localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+      setSuccessMsg("Password unlock configuration saved!");
+      setPasswordInput("");
+    } catch (e) {
+      setErrorMsg((e as Error).message || "Failed to save password unlock");
     } finally {
       setIsLoading(false);
     }
@@ -302,11 +379,9 @@ export default function Home() {
       setIsLoading(true);
       setErrorMsg("");
 
-      // 1. Resolve receiver npub
       const resolved = await resolveIdentifier(composeTo);
       console.log("Resolved target:", resolved);
 
-      // 2. Build envelope
       const envelope = buildEnvelope({
         kind: "unicast_mail",
         value: {
@@ -319,11 +394,9 @@ export default function Home() {
         },
       });
 
-      // 3. Wrap for Nostr targeting recipient npub
       const myHexPub = bytesToHex(getPubkeyFromPrivkey(activePrivKey));
       const nostrEnvelope = wrapForNostr(envelope, [["p", resolved.hex]]);
 
-      // 4. Sign and publish
       const signedEvent = signEvent({
         pubkey: myHexPub,
         created_at: nostrEnvelope.created_at_unix,
@@ -386,6 +459,7 @@ export default function Home() {
     setActivePrivKey(null);
     localStorage.removeItem("tendon_active_creds");
     setAuthStep("choose");
+    setShowOnboarding(true);
   };
 
   const filteredEmails = emails.filter((email) => {
@@ -404,8 +478,164 @@ export default function Home() {
   const selectedEmail = emails.find((e) => e.id === selectedEmailId);
 
   return (
-    <div className="p-3 md:p-5 h-screen w-screen bg-[#0b0a09] flex flex-col overflow-hidden text-neutral-200">
+    <div className="p-3 md:p-5 h-screen w-screen bg-[#0b0a09] flex flex-col overflow-hidden text-neutral-200 antialiased font-sans">
       
+      {/* Onboarding Welcome / Quick Mint Screen */}
+      {showOnboarding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md">
+          <div className="w-full max-w-lg bg-[#161412] border border-white/10 rounded-2xl p-6 md:p-8 shadow-[0_24px_64px_rgba(0,0,0,0.9)] transition-all">
+            <div className="flex flex-col items-center text-center mb-8">
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-xl font-bold font-mono shadow-[0_0_20px_rgba(16,185,129,0.2)] mb-4">
+                T
+              </div>
+              <h1 className="text-xl md:text-2xl font-bold text-[#ededed] tracking-tight">Mint Your Secure Username</h1>
+              <p className="text-xs text-neutral-400 mt-2 max-w-md">
+                Tendon Mail operates fully serverless. Secure your mailbox using hardware passkeys or high-entropy local vaults.
+              </p>
+            </div>
+
+            {errorMsg && (
+              <div className="mb-4 p-3 bg-red-900/30 border border-red-500/20 rounded-xl text-xs text-red-400 font-mono text-center">
+                {errorMsg}
+              </div>
+            )}
+
+            {authStep === "choose" ? (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Choose Username</label>
+                  <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
+                    <input
+                      type="text"
+                      placeholder="e.g. carol"
+                      className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
+                      value={tempAlias}
+                      onChange={(e) => setTempAlias(e.target.value)}
+                    />
+                    <span className="text-xs text-neutral-500 font-mono">@{tempDomain}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                  <button
+                    className="flex flex-col items-center justify-center gap-2 p-4 bg-[#0b0a09]/50 hover:bg-[#0b0a09] border border-white/5 hover:border-emerald-500/50 rounded-xl cursor-pointer hover:scale-[1.01] transition-all group"
+                    onClick={() => {
+                      if (!tempAlias.trim()) {
+                        setErrorMsg("Please enter a username alias first");
+                        return;
+                      }
+                      setAuthStep("passkey");
+                    }}
+                  >
+                    <svg className="text-emerald-500/80 group-hover:text-emerald-400 transition-colors" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 2a5 5 0 0 0-5 5v4H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zM9 7a3 3 0 0 1 6 0v4H9V7zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
+                    </svg>
+                    <span className="text-xs font-semibold text-[#ededed]">Pathway 1: Passkey</span>
+                    <span className="text-[9px] text-neutral-500 text-center">Hardware secure enclave</span>
+                  </button>
+
+                  <button
+                    className="flex flex-col items-center justify-center gap-2 p-4 bg-[#0b0a09]/50 hover:bg-[#0b0a09] border border-white/5 hover:border-emerald-500/50 rounded-xl cursor-pointer hover:scale-[1.01] transition-all group"
+                    onClick={() => {
+                      if (!tempAlias.trim()) {
+                        setErrorMsg("Please enter a username alias first");
+                        return;
+                      }
+                      setAuthStep("password");
+                    }}
+                  >
+                    <svg className="text-emerald-500/80 group-hover:text-emerald-400 transition-colors" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                    <span className="text-xs font-semibold text-[#ededed]">Pathway 2: Password</span>
+                    <span className="text-[9px] text-neutral-500 text-center">Argon2id client key</span>
+                  </button>
+                </div>
+
+                <div className="flex justify-center mt-6">
+                  <button
+                    className="text-xs text-neutral-500 hover:text-emerald-400 font-mono transition-colors"
+                    onClick={() => {
+                      setAuthStep("mnemonic");
+                      setGeneratedMnemonic(createNewMnemonic());
+                    }}
+                  >
+                    Or recover vault via mnemonic backup &rarr;
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col">
+                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
+                  <div className="text-xs font-semibold text-[#ededed] mb-4">
+                    {authStep === "passkey" && "Hardware Passkey Enrollment"}
+                    {authStep === "password" && "Set Local Vault Password"}
+                    {authStep === "mnemonic" && "Mnemonic Vault Recovery"}
+                  </div>
+
+                  {authStep === "password" && (
+                    <input
+                      type="password"
+                      className="w-full bg-[#161412] border border-white/15 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50 mb-4"
+                      placeholder="Enter decryption password"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                    />
+                  )}
+
+                  {authStep === "mnemonic" && (
+                    <div className="flex flex-col gap-4">
+                      {generatedMnemonic && (
+                        <div className="flex flex-col gap-2">
+                          <span className="font-mono text-[9px] text-neutral-500 uppercase">New recovery mnemonic (Copy and save)</span>
+                          <div className="bg-[#161412] border border-white/5 rounded-lg p-3 text-xs text-emerald-400 font-mono select-all">
+                            {generatedMnemonic}
+                          </div>
+                        </div>
+                      )}
+                      <textarea
+                        className="w-full bg-[#161412] border border-white/15 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50 resize-none"
+                        rows={3}
+                        placeholder="Paste recovery mnemonic word list here..."
+                        value={mnemonicInput}
+                        onChange={(e) => setMnemonicInput(e.target.value)}
+                      />
+                    </div>
+                  )}
+
+                  {authStep === "passkey" && (
+                    <div className="text-xs text-neutral-400 mb-2 leading-relaxed">
+                      Click the button below to initialize biometric/security key approval. Your browser will prompt you to create or approve a passkey.
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    className="flex-1 bg-[#0b0a09] border border-white/10 text-neutral-400 py-3 rounded-xl text-xs font-semibold hover:border-white/30 transition-all cursor-pointer"
+                    onClick={() => {
+                      setAuthStep("choose");
+                      setErrorMsg("");
+                    }}
+                    disabled={isLoading}
+                  >
+                    BACK
+                  </button>
+                  <button
+                    className="flex-2 bg-emerald-500 text-black py-3 rounded-xl text-xs font-bold hover:shadow-[0_4px_24px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
+                    onClick={handleConnectSetup}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? "AUTHENTICATING..." : authStep === "passkey" ? "AUTHENTICATE PASSKEY" : "INITIALIZE VAULT"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Tactile Outer Frame Panel */}
       <div className="flex flex-col flex-1 bg-[#161412] border border-white/5 rounded-2xl shadow-[0_16px_48px_rgba(0,0,0,0.8)] overflow-hidden pb-16 md:pb-0">
         
@@ -543,10 +773,13 @@ export default function Home() {
                   </svg>
                   <span className="text-xs max-w-xs">Connect your identity/vault to start receiving and sending encrypted messages on the Nostr network.</span>
                   <button
-                    className="mt-2 bg-emerald-500 text-black px-4 py-2 rounded-lg font-mono text-xs font-bold hover:scale-[1.02] transition-transform"
-                    onClick={() => setIsConnectDrawerOpen(true)}
+                    className="mt-2 bg-emerald-500 text-black px-4 py-2 rounded-lg font-mono text-xs font-bold hover:scale-[1.02] transition-transform cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                    onClick={() => {
+                      setAuthStep("choose");
+                      setShowOnboarding(true);
+                    }}
                   >
-                    CONNECT NOW
+                    MINT / CONNECT VAULT
                   </button>
                 </div>
               ) : filteredEmails.length === 0 ? (
@@ -692,246 +925,129 @@ export default function Home() {
         </div>
 
         <div className="p-6 overflow-y-auto flex-1 bg-[#161412]">
-          {credentials.authMethod !== "None" ? (
-            <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
-              <div className="text-xs font-semibold text-[#ededed] mb-4">Active Key Decryption Settings</div>
-              
-              <div className="flex flex-col gap-1.5 mb-4">
-                <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Identity Domain Endpoint</span>
-                <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400">
-                  {credentials.alias}@{credentials.domain}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5 mb-4">
-                <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">SECP256K1 PUBLIC ADDRESS (npub)</span>
-                <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400 break-all">
-                  {credentials.npub}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5 mb-6">
-                <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Active Authentication Mechanism</span>
-                <div className="font-mono text-xs bg-emerald-500/10 border border-emerald-500/20 p-2.5 rounded-lg text-emerald-400 font-semibold">
-                  {credentials.authMethod}
-                </div>
-              </div>
-
-              <button
-                className="w-full bg-[#161412] border border-red-500/30 text-red-400 font-semibold py-3 px-4 rounded-xl text-xs hover:bg-red-950/20 hover:border-red-500 hover:scale-[1.01] transition-all cursor-pointer"
-                onClick={handleResetAuth}
-              >
-                RESET SYSTEM STATE / DISCONNECT
-              </button>
+          {errorMsg && (
+            <div className="mb-4 p-3 bg-red-900/30 border border-red-500/20 rounded-xl text-xs text-red-400 font-mono">
+              {errorMsg}
             </div>
-          ) : (
-            <>
-              {errorMsg && (
-                <div className="mb-4 p-3 bg-red-900/30 border border-red-500/30 rounded-xl text-xs text-red-400 font-mono">
-                  {errorMsg}
-                </div>
-              )}
+          )}
+          {successMsg && (
+            <div className="mb-4 p-3 bg-emerald-950/30 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-mono">
+              {successMsg}
+            </div>
+          )}
 
-              {authStep === "choose" && (
-                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
-                  <div className="text-xs font-semibold text-[#ededed] mb-2">Select Decryption Mechanism</div>
-                  <p className="text-[11px] text-[#a3a3a3] mb-5">
-                    Private keys stay localized on your device&apos;s sandbox runtime. Select how to authenticate:
-                  </p>
-                  
-                  <div className="flex flex-col gap-3">
-                    <button
-                      className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-xl cursor-pointer hover:scale-[1.01] transition-all flex flex-col gap-1"
-                      onClick={() => setAuthStep("passkey")}
-                    >
-                      <strong className="text-xs text-[#ededed]">Pathway 1: WebAuthn Passkey (Secure Enclave)</strong>
-                      <span className="text-[10px] text-[#a3a3a3]">
-                        Unwrap keys via stable biometric/hardware signature generation (PRF)
-                      </span>
-                    </button>
-                    <button
-                      className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-xl cursor-pointer hover:scale-[1.01] transition-all flex flex-col gap-1"
-                      onClick={() => setAuthStep("password")}
-                    >
-                      <strong className="text-xs text-[#ededed]">Pathway 2: Client-Side Argon2id Password</strong>
-                      <span className="text-[10px] text-[#a3a3a3]">
-                        Derive vault decryption key via edge WASM compute workers
-                      </span>
-                    </button>
-                    <button
-                      className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-xl cursor-pointer hover:scale-[1.01] transition-all flex flex-col gap-1"
-                      onClick={() => {
-                        setAuthStep("mnemonic");
-                        setGeneratedMnemonic(createNewMnemonic());
-                      }}
-                    >
-                      <strong className="text-xs text-[#ededed]">Pathway 3: Recovery Mnemonic Seed</strong>
-                      <span className="text-[10px] text-[#a3a3a3]">
-                        Hydrate identity entropy mathematically from a standard recovery phrase
-                      </span>
-                    </button>
+          {credentials.authMethod !== "None" ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+              <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 shadow-inner">
+                <div className="text-xs font-semibold text-[#ededed] mb-4">Active Key Decryption Settings</div>
+                
+                <div className="flex flex-col gap-1.5 mb-4">
+                  <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Identity Domain Endpoint</span>
+                  <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400">
+                    {credentials.alias}@{credentials.domain}
                   </div>
                 </div>
-              )}
 
-              {authStep === "passkey" && (
-                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
-                  <div className="text-xs font-semibold text-[#ededed] mb-4">WebAuthn Hardware Authentication</div>
-                  
-                  <div className="flex flex-col gap-2 mb-4">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">User Alias</span>
-                    <input
-                      type="text"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                      value={tempAlias}
-                      onChange={(e) => setTempAlias(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-2 mb-6">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verified DNS Domain (defaults to current host)</span>
-                    <input
-                      type="text"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                      value={tempDomain}
-                      onChange={(e) => setTempDomain(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="flex gap-3">
-                    <button
-                      className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-2.5 rounded-xl text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.01] transition-all cursor-pointer"
-                      onClick={() => setAuthStep("choose")}
-                      disabled={isLoading}
-                    >
-                      BACK
-                    </button>
-                    <button
-                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
-                      onClick={handleConnectSetup}
-                      disabled={isLoading}
-                    >
-                      {isLoading ? "PROMPTING..." : "AUTHENTICATE HARDWARE"}
-                    </button>
+                <div className="flex flex-col gap-1.5 mb-4">
+                  <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">SECP256K1 PUBLIC ADDRESS (npub)</span>
+                  <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400 break-all">
+                    {credentials.npub}
                   </div>
                 </div>
-              )}
 
-              {authStep === "password" && (
-                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
-                  <div className="text-xs font-semibold text-[#ededed] mb-4">Argon2id Key Derivation</div>
-                  
-                  <div className="flex flex-col gap-2 mb-4">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">User Alias</span>
-                    <input
-                      type="text"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                      value={tempAlias}
-                      onChange={(e) => setTempAlias(e.target.value)}
-                    />
+                <div className="flex flex-col gap-1.5 mb-6">
+                  <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Active Authentication Mechanism</span>
+                  <div className="font-mono text-xs bg-emerald-500/10 border border-emerald-500/20 p-2.5 rounded-lg text-emerald-400 font-semibold">
+                    {credentials.authMethod}
                   </div>
+                </div>
 
-                  <div className="flex flex-col gap-2 mb-4">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verified DNS Domain</span>
-                    <input
-                      type="text"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                      value={tempDomain}
-                      onChange={(e) => setTempDomain(e.target.value)}
-                    />
-                  </div>
+                <button
+                  className="w-full bg-[#161412] border border-red-500/30 text-red-400 font-semibold py-3 px-4 rounded-xl text-xs hover:bg-red-950/20 hover:border-red-500 hover:scale-[1.01] transition-all cursor-pointer"
+                  onClick={handleResetAuth}
+                >
+                  RESET SYSTEM STATE / DISCONNECT
+                </button>
+              </div>
 
-                  <div className="flex flex-col gap-2 mb-6">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Decryption Password</span>
+              <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 shadow-inner flex flex-col gap-5">
+                <div className="text-xs font-semibold text-[#ededed]">Alternative Unlock Methods</div>
+
+                {/* Register another Passkey */}
+                <div className="flex flex-col gap-2">
+                  <span className="text-[10px] text-neutral-400">Add backup passkeys or register a secondary biometric authenticator:</span>
+                  <button
+                    className="bg-[#161412] border border-white/5 text-[#ededed] py-2 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                    onClick={handleAddPasskey}
+                    disabled={isLoading}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    <span>Register Additional Passkey</span>
+                  </button>
+                </div>
+
+                {/* Set Password Unlock */}
+                <div className="flex flex-col gap-2 border-t border-white/5 pt-4">
+                  <span className="text-[10px] text-neutral-400">Add/Update a password unlock option:</span>
+                  <div className="flex gap-2">
                     <input
                       type="password"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                      placeholder="••••••••••••"
+                      placeholder="Enter new password"
+                      className="bg-[#161412] border border-white/5 rounded-lg p-2 text-xs text-[#ededed] outline-none focus:border-emerald-500/50 flex-1 font-mono"
                       value={passwordInput}
                       onChange={(e) => setPasswordInput(e.target.value)}
                     />
-                  </div>
-
-                  <div className="flex gap-3">
                     <button
-                      className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-2.5 rounded-xl text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.01] transition-all cursor-pointer"
-                      onClick={() => setAuthStep("choose")}
-                      disabled={isLoading}
+                      className="bg-emerald-500 text-black font-bold px-3 rounded-lg text-xs hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
+                      onClick={handleSetPasswordUnlock}
+                      disabled={isLoading || !passwordInput}
                     >
-                      BACK
-                    </button>
-                    <button
-                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
-                      onClick={handleConnectSetup}
-                      disabled={isLoading}
-                    >
-                      {isLoading ? "DERIVING..." : "DERIVE KEY"}
+                      Save Password
                     </button>
                   </div>
                 </div>
-              )}
-
-              {authStep === "mnemonic" && (
-                <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
-                  <div className="text-xs font-semibold text-[#ededed] mb-4">Mnemonic Phrase Verification</div>
-                  
-                  <div className="flex flex-col gap-2 mb-4">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">User Alias</span>
-                    <input
-                      type="text"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                      value={tempAlias}
-                      onChange={(e) => setTempAlias(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-2 mb-4">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verified DNS Domain</span>
-                    <input
-                      type="text"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                      value={tempDomain}
-                      onChange={(e) => setTempDomain(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-2 mb-4">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Generated Recovery Phrase (Or input your own below)</span>
-                    <div className="bg-[#161412] border border-white/5 rounded-lg p-3 text-xs text-emerald-400 font-mono select-all">
-                      {generatedMnemonic}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2 mb-6">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Input Recovery Phrase</span>
-                    <textarea
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50 resize-none"
-                      rows={3}
-                      placeholder="word1 word2 word3..."
-                      value={mnemonicInput}
-                      onChange={(e) => setMnemonicInput(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="flex gap-3">
-                    <button
-                      className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-2.5 rounded-xl text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.01] transition-all cursor-pointer"
-                      onClick={() => setAuthStep("choose")}
-                      disabled={isLoading}
-                    >
-                      BACK
-                    </button>
-                    <button
-                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
-                      onClick={handleConnectSetup}
-                      disabled={isLoading}
-                    >
-                      {isLoading ? "RECOVERING..." : "RECOVER VAULT"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
+              <div className="text-xs font-semibold text-[#ededed] mb-2">Select Decryption Mechanism</div>
+              <p className="text-[11px] text-[#a3a3a3] mb-5">
+                Private keys stay localized on your device&apos;s sandbox runtime. Select how to authenticate:
+              </p>
+              
+              <div className="flex flex-col gap-3">
+                <button
+                  className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-xl cursor-pointer hover:scale-[1.01] transition-all flex flex-col gap-1"
+                  onClick={() => setAuthStep("passkey")}
+                >
+                  <strong className="text-xs text-[#ededed]">Pathway 1: WebAuthn Passkey (Secure Enclave)</strong>
+                  <span className="text-[10px] text-[#a3a3a3]">
+                    Unwrap keys via stable biometric/hardware signature generation
+                  </span>
+                </button>
+                <button
+                  className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-xl cursor-pointer hover:scale-[1.01] transition-all flex flex-col gap-1"
+                  onClick={() => setAuthStep("password")}
+                >
+                  <strong className="text-xs text-[#ededed]">Pathway 2: Client-Side Argon2id Password</strong>
+                  <span className="text-[10px] text-[#a3a3a3]">
+                    Derive vault decryption key via edge WASM compute workers
+                  </span>
+                </button>
+                <button
+                  className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-xl cursor-pointer hover:scale-[1.01] transition-all flex flex-col gap-1"
+                  onClick={() => setAuthStep("mnemonic")}
+                >
+                  <strong className="text-xs text-[#ededed]">Pathway 3: Recovery Mnemonic Seed</strong>
+                  <span className="text-[10px] text-[#a3a3a3]">
+                    Hydrate identity entropy mathematically from a standard recovery phrase
+                  </span>
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

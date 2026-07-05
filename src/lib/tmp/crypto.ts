@@ -149,16 +149,21 @@ export async function registerPasskey(alias: string): Promise<{ key: Uint8Array;
   };
 }
 
-export async function loginPasskey(credentialIdHex: string): Promise<Uint8Array> {
+export async function loginPasskey(credentialIdsHex: string[] | string): Promise<{ key: Uint8Array; credentialIdHex: string }> {
   const rpId = window.location.hostname || "localhost";
   const prfSalt = new TextEncoder().encode("tendon-v3-prf-salt");
-  const credentialIdBytes = hexToBytes(credentialIdHex);
+  
+  const ids = Array.isArray(credentialIdsHex) ? credentialIdsHex : [credentialIdsHex];
+  const allowCredentials = ids.map(id => ({
+    type: "public-key" as const,
+    id: hexToBytes(id),
+  }));
 
   const credential = (await navigator.credentials.get({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       rpId,
-      allowCredentials: [{ type: "public-key", id: credentialIdBytes }],
+      allowCredentials,
       userVerification: "required",
       extensions: {
         prf: {
@@ -187,7 +192,11 @@ export async function loginPasskey(credentialIdHex: string): Promise<Uint8Array>
     prfBuffer = sha256(new Uint8Array(credential.rawId)).buffer as ArrayBuffer;
   }
 
-  return new Uint8Array(prfBuffer);
+  const credentialIdHex = bytesToHex(new Uint8Array(credential.rawId));
+  return {
+    key: new Uint8Array(prfBuffer),
+    credentialIdHex,
+  };
 }
 
 // Pathway 2: Client-Side Argon2id Password (Portability Layer)
