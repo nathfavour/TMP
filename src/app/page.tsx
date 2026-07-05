@@ -60,15 +60,8 @@ export default function Home() {
   // Onboarding wizard
   const [showOnboarding, setShowOnboarding] = useState(() => {
     if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("tendon_active_creds");
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (parsed.npub) return false;
-        } catch (e) {
-          console.error(e);
-        }
-      }
+      const activeKey = sessionStorage.getItem("tendon_active_key");
+      if (activeKey) return false;
     }
     return true;
   });
@@ -98,7 +91,19 @@ export default function Home() {
     };
   });
 
-  const [activePrivKey, setActivePrivKey] = useState<Uint8Array | null>(null);
+  const [activePrivKey, setActivePrivKey] = useState<Uint8Array | null>(() => {
+    if (typeof window !== "undefined") {
+      const hex = sessionStorage.getItem("tendon_active_key");
+      if (hex) {
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) {
+          bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        }
+        return bytes;
+      }
+    }
+    return null;
+  });
   const [activeVaultConfig, setActiveVaultConfig] = useState<AccountVaultConfig | null>(() => {
     if (typeof window !== "undefined") {
       const savedCreds = localStorage.getItem("tendon_active_creds");
@@ -300,8 +305,8 @@ export default function Home() {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      const alias = tempAlias.trim().toLowerCase();
-      const domain = tempDomain.trim();
+      const alias = (credentials.alias || tempAlias).trim().toLowerCase();
+      const domain = (credentials.domain || tempDomain).trim();
       if (!alias || !domain) {
         throw new Error("Alias and domain must not be empty");
       }
@@ -386,6 +391,9 @@ export default function Home() {
       const activeCreds = { npub, alias, authMethod: methodUsed, domain };
       setCredentials(activeCreds);
       setActivePrivKey(privateKeyBytes);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("tendon_active_key", bytesToHex(privateKeyBytes));
+      }
       localStorage.setItem("tendon_active_creds", JSON.stringify(activeCreds));
       setIsConnectDrawerOpen(false);
       setShowOnboarding(false);
@@ -613,6 +621,9 @@ export default function Home() {
     });
     setActivePrivKey(null);
     localStorage.removeItem("tendon_active_creds");
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("tendon_active_key");
+    }
     setShowOnboarding(true);
   };
 
@@ -648,7 +659,7 @@ export default function Home() {
                   Please authenticate using your passkey to unwrap your encryption keys and load your mailbox.
                 </p>
                 <div className="font-mono text-xs bg-[#0b0a09] border border-white/5 px-4 py-2.5 rounded-lg text-emerald-400 mt-4">
-                  {credentials.alias}@{credentials.domain}
+                  {credentials.alias}
                 </div>
               </div>
             ) : (
