@@ -156,7 +156,7 @@ export async function loginPasskey(credentialIdsHex: string[] | string): Promise
   const ids = Array.isArray(credentialIdsHex) ? credentialIdsHex : [credentialIdsHex];
   const allowCredentials = ids.map(id => ({
     type: "public-key" as const,
-    id: hexToBytes(id),
+    id: hexToBytes(id) as unknown as BufferSource,
   }));
 
   const credential = (await navigator.credentials.get({

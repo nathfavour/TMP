@@ -48,7 +48,7 @@ export class NostrRelayPool {
   private urls: string[];
   private sockets: Map<string, WebSocket> = new Map();
   private listeners: Set<(event: NostrEvent) => void> = new Set();
-  private subscriptions: Map<string, string[]> = new Map(); // subId -> filters
+  private subscriptions: Map<string, Record<string, unknown>[]> = new Map(); // subId -> filters
 
   constructor(urls: string[]) {
     this.urls = urls;
