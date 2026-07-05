@@ -40,6 +40,7 @@ interface AccountVaultConfig {
     createdAt?: number;
   }[];
   passwordVault?: EncryptedVault;
+  mnemonicVault?: EncryptedVault;
 }
 
 const DEFAULT_RELAYS = [
@@ -137,7 +138,10 @@ export default function Home() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
-  const [loginMethod, setLoginMethod] = useState<"passkey" | "password">("passkey");
+  const [loginMethod, setLoginMethod] = useState<"passkey" | "password" | "mnemonic">("passkey");
+  const [mnemonicInput, setMnemonicInput] = useState("");
+  const [isMnemonicDrawerOpen, setIsMnemonicDrawerOpen] = useState(false);
+  const [activeMnemonicBackup, setActiveMnemonicBackup] = useState("");
   const [isCheckingPasswordOnchain, setIsCheckingPasswordOnchain] = useState(false);
   const [passwordExistsOnchain, setPasswordExistsOnchain] = useState<boolean | null>(null);
   const [resolvedUsername, setResolvedUsername] = useState("");
@@ -442,6 +446,29 @@ export default function Home() {
           accountVault.passwordVault = vault;
           localStorage.setItem(vaultKey, JSON.stringify(accountVault));
         }
+      } else if (activeStep === "mnemonic") {
+        methodUsed = "Mnemonic";
+        if (!mnemonicInput.trim()) {
+          throw new Error("Mnemonic recovery phrase must not be empty");
+        }
+        const { deriveKeyFromMnemonic } = await import("@/lib/tmp/crypto");
+        
+        // Check if there is an encrypted vault wrapper for mnemonic first
+        if (accountVault.mnemonicVault) {
+          try {
+            const seedKey = deriveKeyFromMnemonic(mnemonicInput);
+            privateKeyBytes = await decryptVault(accountVault.mnemonicVault, seedKey);
+          } catch {
+            throw new Error("Incorrect recovery phrase. Decryption of local vault failed.");
+          }
+        } else {
+          // Fall back to direct deterministic derivation
+          try {
+            privateKeyBytes = deriveKeyFromMnemonic(mnemonicInput);
+          } catch (err) {
+            throw new Error(`Failed to derive key from recovery phrase: ${(err as Error).message}`);
+          }
+        }
       } else {
         throw new Error("Invalid authentication pathway selection");
       }
@@ -622,6 +649,38 @@ export default function Home() {
       setPasswordExistsOnchain(!!activeVaultConfig?.passwordVault);
     } finally {
       setIsCheckingPasswordOnchain(false);
+    }
+  };
+
+  const handleConfigureMnemonicBackup = async () => {
+    if (!activePrivKey || !credentials.alias) return;
+    setIsLoading(true);
+    setSuccessMsg("");
+    setErrorMsg("");
+    try {
+      const { createNewMnemonic, deriveKeyFromMnemonic } = await import("@/lib/tmp/crypto");
+      const mnemonic = createNewMnemonic();
+      
+      const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+      const savedVaultRaw = localStorage.getItem(vaultKey);
+      const accountVault: AccountVaultConfig = savedVaultRaw 
+        ? JSON.parse(savedVaultRaw) 
+        : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
+
+      const seedKey = deriveKeyFromMnemonic(mnemonic);
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const vault = await encryptVault(activePrivKey, seedKey, salt);
+      accountVault.mnemonicVault = vault;
+      
+      localStorage.setItem(vaultKey, JSON.stringify(accountVault));
+      setActiveMnemonicBackup(mnemonic);
+      setIsMnemonicDrawerOpen(true);
+      setSuccessMsg("Mnemonic recovery phrase backup generated successfully!");
+      loadActiveVaultConfig();
+    } catch (e) {
+      setErrorMsg((e as Error).message || "Failed to generate recovery phrase");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -896,6 +955,21 @@ export default function Home() {
                 </div>
               )}
 
+              {/* Mnemonic phrase input shown if signing in and method is recovery phrase */}
+              {!credentials.alias && isAliasTaken === true && loginMethod === "mnemonic" && (
+                <div className="flex flex-col gap-1.5 mt-1.5 animate-fadeIn">
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Recovery Phrase (12 Words)</label>
+                  <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
+                    <textarea
+                      placeholder="Enter your 12-word mnemonic phrase"
+                      className="bg-transparent border-none text-[#ededed] text-xs outline-none w-full font-mono placeholder:text-neutral-600 resize-none h-16"
+                      value={mnemonicInput}
+                      onChange={(e) => setMnemonicInput(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
                 className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
                 onClick={() => {
@@ -903,12 +977,22 @@ export default function Home() {
                     setErrorMsg("Please enter a username alias first");
                     return;
                   }
-                  if (!credentials.alias && isAliasTaken === true && loginMethod === "password") {
-                    if (!passwordInput) {
-                      setErrorMsg("Password is required to sign in");
-                      return;
+                  if (!credentials.alias && isAliasTaken === true) {
+                    if (loginMethod === "password") {
+                      if (!passwordInput) {
+                        setErrorMsg("Password is required to sign in");
+                        return;
+                      }
+                      handleConnectSetup("password");
+                    } else if (loginMethod === "mnemonic") {
+                      if (!mnemonicInput) {
+                        setErrorMsg("Recovery phrase is required to sign in");
+                        return;
+                      }
+                      handleConnectSetup("mnemonic");
+                    } else {
+                      handleConnectSetup("passkey");
                     }
-                    handleConnectSetup("password");
                   } else {
                     handleConnectSetup("passkey");
                   }
@@ -924,27 +1008,36 @@ export default function Home() {
                     : credentials.alias 
                       ? "UNLOCK WITH PASSKEY" 
                       : isAliasTaken === true 
-                        ? (loginMethod === "password" ? "SIGN IN WITH PASSWORD" : "SIGN IN WITH PASSKEY")
+                        ? (loginMethod === "password" ? "SIGN IN WITH PASSWORD" : loginMethod === "mnemonic" ? "SIGN IN WITH PHRASE" : "SIGN IN WITH PASSKEY")
                         : "MINT WITH PASSKEY"}
                 </span>
               </button>
 
               {/* Alternative method toggles (only when username exists on server) */}
               {!credentials.alias && isAliasTaken === true && (
-                <div className="flex justify-center mt-1">
-                  {loginMethod === "passkey" ? (
-                    <button
-                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
-                      onClick={() => setLoginMethod("password")}
-                    >
-                      Use Password instead &rarr;
-                    </button>
-                  ) : (
+                <div className="flex justify-center gap-4 mt-2">
+                  {loginMethod !== "passkey" && (
                     <button
                       className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
                       onClick={() => setLoginMethod("passkey")}
                     >
-                      Use Passkey instead &rarr;
+                      Use Passkey
+                    </button>
+                  )}
+                  {loginMethod !== "password" && (
+                    <button
+                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => setLoginMethod("password")}
+                    >
+                      Use Password
+                    </button>
+                  )}
+                  {loginMethod !== "mnemonic" && (
+                    <button
+                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => setLoginMethod("mnemonic")}
+                    >
+                      Use Phrase
                     </button>
                   )}
                 </div>
@@ -1397,6 +1490,20 @@ export default function Home() {
                     </span>
                   </button>
                 </div>
+
+                {/* Export Mnemonic / Phrase */}
+                <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+                  <span className="text-[10px] text-neutral-400">Generate or view a 12-word recovery seed phrase backup:</span>
+                  <button
+                    className="bg-[#161412] border border-white/5 text-[#ededed] py-2.5 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                    onClick={handleConfigureMnemonicBackup}
+                    disabled={isLoading}
+                  >
+                    <span>
+                      {activeVaultConfig?.mnemonicVault ? "Export / View Recovery Phrase" : "Generate Recovery Phrase Backup"}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -1729,6 +1836,46 @@ export default function Home() {
             disabled={isLoading || deleteConfirmUsername.trim().toLowerCase() !== credentials.alias.toLowerCase()}
           >
             <span>DELETE & WIPE ACCOUNT FOREVER</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Configure Mnemonic Backup Drawer (60% height) */}
+      {isMnemonicDrawerOpen && (
+        <div 
+          className="fixed inset-0 bg-black/75 backdrop-blur-[2px] z-[1001] transition-opacity" 
+          onClick={() => setIsMnemonicDrawerOpen(false)} 
+        />
+      )}
+      <div className={`fixed bottom-0 left-0 right-0 bg-[#161412] border-t border-[#34322f] rounded-t-2xl z-[1002] transition-transform duration-300 transform flex flex-col h-[60vh] ${
+        isMnemonicDrawerOpen ? "translate-y-0 shadow-[0_-12px_36px_rgba(0,0,0,0.6)]" : "translate-y-full"
+      }`}>
+        <div className="flex justify-between items-center p-5 border-b border-white/5 bg-[#0b0a09]/30">
+          <span className="font-mono font-bold text-xs uppercase tracking-wider text-emerald-400">Recovery Phrase Backup</span>
+          <button className="text-[#a3a3a3] hover:text-[#ededed] p-1 cursor-pointer transition-colors" onClick={() => setIsMnemonicDrawerOpen(false)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1 bg-[#161412] flex flex-col gap-5 text-neutral-200">
+          <p className="text-[11px] text-[#a3a3a3]">
+            This is your secure, client-side derived recovery seed phrase. Store these 12 words in a safe, offline location. Anyone with access to this phrase can recover your mailbox identity.
+          </p>
+
+          <div className="bg-[#0b0a09] border border-white/10 rounded-xl p-4 font-mono text-sm leading-relaxed tracking-wide text-emerald-400 select-all break-words select-text">
+            {activeMnemonicBackup}
+          </div>
+
+          <button
+            className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
+            onClick={() => {
+              navigator.clipboard.writeText(activeMnemonicBackup);
+              alert("Copied to clipboard!");
+            }}
+          >
+            <span>COPY RECOVERY PHRASE</span>
           </button>
         </div>
       </div>
