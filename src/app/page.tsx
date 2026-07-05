@@ -133,6 +133,10 @@ export default function Home() {
   });
   const [authStep, setAuthStep] = useState<"choose" | "passkey" | "password" | "mnemonic">("choose");
   const [passwordInput, setPasswordInput] = useState("");
+  const [isPasswordDrawerOpen, setIsPasswordDrawerOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loginMethod, setLoginMethod] = useState<"passkey" | "password">("passkey");
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -511,9 +515,13 @@ export default function Home() {
     }
   };
 
-  // Set password unlock method
-  const handleSetPasswordUnlock = async () => {
-    if (!activePrivKey || !credentials.npub || !passwordInput) return;
+  // Set alternative password login option
+  const handleSaveAlternativePassword = async () => {
+    if (!activePrivKey || !credentials.alias || !newPassword.trim()) return;
+    if (newPassword !== confirmPassword) {
+      setErrorMsg("Passwords do not match");
+      return;
+    }
     setIsLoading(true);
     setSuccessMsg("");
     setErrorMsg("");
@@ -525,15 +533,17 @@ export default function Home() {
         : { alias: credentials.alias, domain: credentials.domain, passkeys: [] };
 
       const salt = crypto.getRandomValues(new Uint8Array(16));
-      const prfKey = await deriveKeyFromPassword(passwordInput, bytesToHex(salt));
+      const prfKey = await deriveKeyFromPassword(newPassword, bytesToHex(salt));
       const vault = await encryptVault(activePrivKey, prfKey, salt);
       accountVault.passwordVault = vault;
       
       localStorage.setItem(vaultKey, JSON.stringify(accountVault));
-      setSuccessMsg("Password unlock configuration saved!");
-      setPasswordInput("");
+      setSuccessMsg("Alternative password login configured successfully!");
+      setIsPasswordDrawerOpen(false);
+      setNewPassword("");
+      setConfirmPassword("");
     } catch (e) {
-      setErrorMsg((e as Error).message || "Failed to save password unlock");
+      setErrorMsg((e as Error).message || "Failed to save password option");
     } finally {
       setIsLoading(false);
     }
@@ -749,6 +759,22 @@ export default function Home() {
                 </div>
               )}
 
+              {/* Password input shown if signing in and method is password */}
+              {!credentials.alias && isAliasTaken === true && loginMethod === "password" && (
+                <div className="flex flex-col gap-1.5 mt-1.5 animate-fadeIn">
+                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Password</label>
+                  <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
+                    <input
+                      type="password"
+                      placeholder="Enter decryption password"
+                      className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
                 className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
                 onClick={() => {
@@ -756,7 +782,15 @@ export default function Home() {
                     setErrorMsg("Please enter a username alias first");
                     return;
                   }
-                  handleConnectSetup("passkey");
+                  if (!credentials.alias && isAliasTaken === true && loginMethod === "password") {
+                    if (!passwordInput) {
+                      setErrorMsg("Password is required to sign in");
+                      return;
+                    }
+                    handleConnectSetup("password");
+                  } else {
+                    handleConnectSetup("passkey");
+                  }
                 }}
                 disabled={isLoading}
               >
@@ -769,10 +803,31 @@ export default function Home() {
                     : credentials.alias 
                       ? "UNLOCK WITH PASSKEY" 
                       : isAliasTaken === true 
-                        ? "SIGN IN WITH PASSKEY" 
+                        ? (loginMethod === "password" ? "SIGN IN WITH PASSWORD" : "SIGN IN WITH PASSKEY")
                         : "MINT WITH PASSKEY"}
                 </span>
               </button>
+
+              {/* Alternative method toggles (only when username exists on server) */}
+              {!credentials.alias && isAliasTaken === true && (
+                <div className="flex justify-center mt-1">
+                  {loginMethod === "passkey" ? (
+                    <button
+                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => setLoginMethod("password")}
+                    >
+                      Use Password instead &rarr;
+                    </button>
+                  ) : (
+                    <button
+                      className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                      onClick={() => setLoginMethod("passkey")}
+                    >
+                      Use Passkey instead &rarr;
+                    </button>
+                  )}
+                </div>
+              )}
 
               {credentials.alias && (
                 <div className="flex justify-center mt-2">
@@ -1198,24 +1253,15 @@ export default function Home() {
                 </div>
 
                 {/* Set Password Unlock */}
-                <div className="flex flex-col gap-2 border-t border-white/5 pt-4">
-                  <span className="text-[10px] text-neutral-400">Add/Update a password unlock option:</span>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      placeholder="Enter new password"
-                      className="bg-[#161412] border border-white/5 rounded-lg p-2 text-xs text-[#ededed] outline-none focus:border-emerald-500/50 flex-1 font-mono"
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                    />
-                    <button
-                      className="bg-emerald-500 text-black font-bold px-3 rounded-lg text-xs hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
-                      onClick={handleSetPasswordUnlock}
-                      disabled={isLoading || !passwordInput}
-                    >
-                      Save Password
-                    </button>
-                  </div>
+                <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+                  <span className="text-[10px] text-neutral-400">Add or update an alternative password login method:</span>
+                  <button
+                    className="bg-[#161412] border border-white/5 text-[#ededed] py-2.5 px-3 rounded-lg text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                    onClick={() => setIsPasswordDrawerOpen(true)}
+                    disabled={isLoading}
+                  >
+                    <span>Configure Password Login</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1411,6 +1457,62 @@ export default function Home() {
           </div>
         </>
       )}
+
+      {/* Configure Password Login Drawer (60% height) */}
+      {isPasswordDrawerOpen && (
+        <div 
+          className="fixed inset-0 bg-black/75 backdrop-blur-[2px] z-[1001] transition-opacity" 
+          onClick={() => setIsPasswordDrawerOpen(false)} 
+        />
+      )}
+      <div className={`fixed bottom-0 left-0 right-0 bg-[#161412] border-t border-[#34322f] rounded-t-2xl z-[1002] transition-transform duration-300 transform flex flex-col h-[60vh] ${
+        isPasswordDrawerOpen ? "translate-y-0 shadow-[0_-12px_36px_rgba(0,0,0,0.6)]" : "translate-y-full"
+      }`}>
+        <div className="flex justify-between items-center p-5 border-b border-white/5 bg-[#0b0a09]/30">
+          <span className="font-mono font-bold text-xs uppercase tracking-wider text-emerald-400">Configure Password Option</span>
+          <button className="text-[#a3a3a3] hover:text-[#ededed] p-1 cursor-pointer transition-colors" onClick={() => setIsPasswordDrawerOpen(false)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1 bg-[#161412] flex flex-col gap-4">
+          <p className="text-[11px] text-[#a3a3a3]">
+            Set a client-side Argon2id password key wrap. You can use this password to decrypt your vault on other devices that do not share your hardware passkeys.
+          </p>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">New Password</label>
+            <input
+              type="password"
+              placeholder="Enter new secure password"
+              className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Confirm Password</label>
+            <input
+              type="password"
+              placeholder="Confirm password"
+              className="bg-[#0b0a09] border border-white/10 rounded-xl p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          </div>
+
+          <button
+            className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-4"
+            onClick={handleSaveAlternativePassword}
+            disabled={isLoading || !newPassword || !confirmPassword}
+          >
+            <span>{isLoading ? "DERIVING ARGON2ID WRAP..." : "SAVE PASSWORD OPTION"}</span>
+          </button>
+        </div>
+      </div>
 
     </div>
   );
