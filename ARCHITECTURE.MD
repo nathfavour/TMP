@@ -61,21 +61,30 @@ To resolve human-readable usernames (for example `nathfavour`), the client maps 
 
 This static file acts as the definitive directory lookup. It enables third-party platforms (for example GitHub, Vercel) to host zero-server, high-volume application inboxes for their entire user base via simple static file routing.
 
-#### `tendon.json` schema
+#### Protocol v3.1: Cryptographic Delegation Certificates
+
+To thwart malicious or spoofed clients claiming unauthorized name verification status, the directory endpoint exports verified signatures signed by the domain's private key. The client embeds these signatures inside their published Nostr vault events, enabling other decentralized nodes to instantly verify identity authenticity offline without checking the domain's web servers.
+
+#### `tendon.json` schema (v3.1)
 
 ```json
 {
   "names": {
-    "nathfavour": "64_char_hex_public_key_npub_identifier"
+    "nathfavour": "npub17x6p2q9m6a5s8d3f8g0h2j4k6l8m9n0p2q4r6s8t0u2v4w6x8y0szqpq2a"
   },
+  "names_v31": {
+    "nathfavour": {
+      "npub": "npub17x6p2q9m6a5s8d3f8g0h2j4k6l8m9n0p2q4r6s8t0u2v4w6x8y0szqpq2a",
+      "signature": "64_byte_schnorr_signature_of_username_and_npub"
+    }
+  },
+  "domain_pubkey": "hex_public_key_of_domain",
   "vault_pointer": {
     "relays": [
       "wss://relay.damus.io",
       "wss://nos.lol",
       "wss://tendon.protocol.net"
-    ],
-    "event_id": "hex_id_of_kind_30078_vault_event",
-    "argon2_salt": "a8f3b2c9d1e7f0a4b3c2d1e0f9a8b7c6"
+    ]
   }
 }
 ```
@@ -83,7 +92,8 @@ This static file acts as the definitive directory lookup. It enables third-party
 #### Verification execution flow
 1. Resolution request: parse target as `username@domain.com`.
 2. HTTPS fetch: GET `https://domain.com/.well-known/tendon.json`.
-3. Mapping: find username in `names`, extract pubkey, fetch matching `kind:30078` vault configurations from declared relays using `event_id`.
+3. Signature verification: Confirm that `names_v31[username].signature` cryptographically validates `${username}:${npub}` against the root `domain_pubkey` using Schnorr/secp256k1.
+4. Nostr publication: The client publishes their vault config containing this signature as a NIP-01 `["verification", "username@domain", signature, domain_pubkey]` event tag.
 
 ### 3.2 Tier 2: Free Local Petname Overlays
 

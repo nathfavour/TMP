@@ -1,10 +1,25 @@
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 export const dynamic = "force-dynamic";
 
 const DIRECTORY_FILE = path.join(process.cwd(), "tendon_directory.json");
+
+const DOMAIN_PRIV_KEY = new Uint8Array([
+  0xdb, 0x4a, 0x1f, 0x22, 0xc1, 0x5a, 0xd0, 0x76, 0xa3, 0xf6, 0x1e, 0x8b, 0x3d, 0x2c, 0xb9, 0xf1,
+  0x07, 0x4d, 0x93, 0x11, 0x1d, 0xe4, 0x78, 0x29, 0x11, 0x87, 0x50, 0x4d, 0xa4, 0x5f, 0x9d, 0x01
+]);
+const DOMAIN_PUB_KEY = Buffer.from(schnorr.getPublicKey(DOMAIN_PRIV_KEY)).toString("hex");
+
+function signVerification(username: string, npub: string): string {
+  const encoder = new TextEncoder();
+  const hash = sha256(encoder.encode(username + ":" + npub));
+  const signature = schnorr.sign(hash, DOMAIN_PRIV_KEY);
+  return Buffer.from(signature).toString("hex");
+}
 
 function readDirectory(): Record<string, string> {
   try {
@@ -30,8 +45,18 @@ function writeDirectory(dir: Record<string, string>) {
 
 export async function GET() {
   const names = readDirectory();
+  const names_v31: Record<string, { npub: string; signature: string }> = {};
+  for (const [username, npub] of Object.entries(names)) {
+    names_v31[username] = {
+      npub,
+      signature: signVerification(username, npub)
+    };
+  }
+
   return NextResponse.json({
     names,
+    names_v31,
+    domain_pubkey: DOMAIN_PUB_KEY,
     vault_pointer: {
       relays: [
         "wss://relay.damus.io",

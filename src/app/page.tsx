@@ -41,6 +41,8 @@ interface AccountVaultConfig {
   passwordVault?: EncryptedVault;
   mnemonicVault?: EncryptedVault;
   encryptedMnemonic?: EncryptedVault;
+  domainSignature?: string;
+  domainPubkey?: string;
 }
 
 const DEFAULT_RELAYS = [
@@ -148,6 +150,7 @@ export default function Home() {
   const [searchedNpubHint, setSearchedNpubHint] = useState("");
   const [isDeleteAccountDrawerOpen, setIsDeleteAccountDrawerOpen] = useState(false);
   const [deleteConfirmUsername, setDeleteConfirmUsername] = useState("");
+  const [isVerifiedIdentity, setIsVerifiedIdentity] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -204,6 +207,44 @@ export default function Home() {
 
     return () => clearTimeout(timer);
   }, [tempAlias]);
+
+  useEffect(() => {
+    let active = true;
+    if (credentials.alias && credentials.domain && activePrivKey) {
+      const vaultKey = `tendon_account_vault_${credentials.alias}@${credentials.domain}`;
+      const savedVaultRaw = localStorage.getItem(vaultKey);
+      if (savedVaultRaw) {
+        try {
+          const vaultObj = JSON.parse(savedVaultRaw) as AccountVaultConfig;
+          if (vaultObj.domainSignature && vaultObj.domainPubkey) {
+            const myHexPub = bytesToHex(getPubkeyFromPrivkey(activePrivKey));
+            
+            import("@/lib/tmp/crypto").then(({ verifyVerification, bytesToNpub, hexToBytes }) => {
+              if (!active) return;
+              const npubStr = bytesToNpub(hexToBytes(myHexPub));
+              const verified = verifyVerification(
+                credentials.alias,
+                npubStr,
+                vaultObj.domainSignature!,
+                vaultObj.domainPubkey!
+              );
+              setIsVerifiedIdentity(verified);
+            });
+            return;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    setTimeout(() => {
+      if (active) setIsVerifiedIdentity(false);
+    }, 0);
+
+    return () => {
+      active = false;
+    };
+  }, [credentials, activePrivKey]);
 
   const loadDirectoryNames = async () => {
     try {
@@ -397,10 +438,15 @@ export default function Home() {
             const registryResponse = await fetch(`http://${domain}/.well-known/tendon.json`);
             if (registryResponse.ok) {
               const regData = await registryResponse.json();
-              const targetNpub = regData.names?.[alias];
+              const targetEntry = regData.names_v31?.[alias];
+              const targetNpub = targetEntry ? targetEntry.npub : regData.names?.[alias];
               if (targetNpub) {
                 const { npubToBytes } = await import("@/lib/tmp/crypto");
                 hexPub = bytesToHex(npubToBytes(targetNpub));
+                if (targetEntry) {
+                  accountVault.domainSignature = targetEntry.signature;
+                  accountVault.domainPubkey = regData.domain_pubkey;
+                }
               }
             }
           }
@@ -642,11 +688,16 @@ export default function Home() {
   const publishVaultToRelays = async (accountVault: AccountVaultConfig, privKey: Uint8Array) => {
     try {
       const myHexPub = bytesToHex(getPubkeyFromPrivkey(privKey));
+      const tags = [["d", "tendon-mailbox-vault"]];
+      if (accountVault.domain && accountVault.domainSignature && accountVault.domainPubkey) {
+        tags.push(["verification", `${accountVault.alias}@${accountVault.domain}`, accountVault.domainSignature, accountVault.domainPubkey]);
+      }
+
       const signedEvent = signEvent({
         pubkey: myHexPub,
         created_at: Math.floor(Date.now() / 1000),
         kind: 30078,
-        tags: [["d", "tendon-mailbox-vault"]],
+        tags,
         content: JSON.stringify(accountVault),
       }, privKey);
 
@@ -1326,6 +1377,11 @@ export default function Home() {
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span>{credentials.alias}@{credentials.domain}</span>
+                {isVerifiedIdentity && (
+                  <svg className="w-3 h-3 text-emerald-400 fill-emerald-400" viewBox="0 0 24 24">
+                    <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                  </svg>
+                )}
               </div>
             ) : (
               <button 

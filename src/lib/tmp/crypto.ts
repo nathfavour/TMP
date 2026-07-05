@@ -5,6 +5,16 @@ import { bech32 } from "bech32";
 import { generateMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
+export function verifyVerification(username: string, npub: string, signature: string, domainPubkey: string): boolean {
+  try {
+    const encoder = new TextEncoder();
+    const hash = sha256(encoder.encode(username + ":" + npub));
+    return schnorr.verify(new Uint8Array(Buffer.from(signature, "hex")), hash, new Uint8Array(Buffer.from(domainPubkey, "hex")));
+  } catch {
+    return false;
+  }
+}
+
 // Encrypted Vault model
 export interface EncryptedVault {
   ciphertext: string; // hex
