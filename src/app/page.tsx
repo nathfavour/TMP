@@ -132,6 +132,44 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [directoryNames, setDirectoryNames] = useState<Record<string, string>>({});
+
+  const loadDirectoryNames = async () => {
+    try {
+      const domain = credentials.domain || window.location.host;
+      const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
+      const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.names) {
+          setDirectoryNames(data.names);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load directory names for auto-complete:", e);
+    }
+  };
+
+  const handleOpenCompose = () => {
+    setIsComposeOpen(true);
+    loadDirectoryNames();
+  };
+
+  const getComposeSuggestions = () => {
+    const query = composeTo.trim().toLowerCase();
+    if (!query) return [];
+
+    const suggestions: { username: string; npub: string }[] = [];
+    for (const [name, npub] of Object.entries(directoryNames)) {
+      if (
+        name.toLowerCase().includes(query) ||
+        npub.toLowerCase().includes(query)
+      ) {
+        suggestions.push({ username: name, npub });
+      }
+    }
+    return suggestions.slice(0, 5);
+  };
 
   const loadActiveVaultConfig = () => {
     if (typeof window !== "undefined" && credentials.alias && credentials.domain) {
@@ -692,7 +730,7 @@ export default function Home() {
             <div>
               <button 
                 className="flex items-center justify-center gap-2 bg-[#0b0a09] text-emerald-400 border border-white/5 hover:border-emerald-500 font-semibold py-2.5 px-4 rounded-xl w-full text-xs hover:-translate-y-[1px] hover:shadow-[0_4px_16px_rgba(16,185,129,0.15)] active:scale-[0.99] cursor-pointer transition-all mb-6 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => setIsComposeOpen(true)}
+                onClick={() => handleOpenCompose()}
                 disabled={!activePrivKey}
                 title={!activePrivKey ? "Please connect your vault first" : ""}
               >
@@ -839,7 +877,7 @@ export default function Home() {
                         onClick={() => {
                           setComposeTo(selectedEmail.sender);
                           setComposeSubject(`Re: ${selectedEmail.subject}`);
-                          setIsComposeOpen(true);
+                          handleOpenCompose();
                         }}
                       >
                         Reply
@@ -1109,7 +1147,7 @@ export default function Home() {
         </button>
         <button 
           className="flex flex-col items-center justify-center w-10 h-10 bg-[#0b0a09] border border-white/5 text-emerald-400 rounded-full hover:scale-105 active:scale-95 transition-all shadow-[0_4px_12px_rgba(16,185,129,0.2)] cursor-pointer disabled:opacity-50"
-          onClick={() => setIsComposeOpen(true)}
+          onClick={() => handleOpenCompose()}
           disabled={!activePrivKey}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1161,14 +1199,32 @@ export default function Home() {
             </div>
             
             <form className="flex-1 flex flex-col p-5 gap-3 bg-[#161412]" onSubmit={handleSendEmail}>
-              <input
-                type="text"
-                placeholder="To (username@domain.com or npub)"
-                className="bg-[#0b0a09] border border-white/5 rounded-lg p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
-                value={composeTo}
-                onChange={(e) => setComposeTo(e.target.value)}
-                required
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="To (username or npub)"
+                  className="w-full bg-[#0b0a09] border border-white/5 rounded-lg p-3 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+                  value={composeTo}
+                  onChange={(e) => setComposeTo(e.target.value)}
+                  required
+                />
+                {getComposeSuggestions().length > 0 && composeTo.trim() !== "" && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-[#161412] border border-white/10 rounded-lg shadow-2xl z-[999] overflow-hidden max-h-40 overflow-y-auto">
+                    {getComposeSuggestions().map((s) => (
+                      <div
+                        key={s.npub}
+                        className="p-2.5 text-xs hover:bg-emerald-500/10 hover:text-emerald-400 cursor-pointer flex flex-col gap-0.5 border-b border-white/5 last:border-b-0 transition-colors"
+                        onClick={() => {
+                          setComposeTo(s.username);
+                        }}
+                      >
+                        <span className="font-semibold text-[#ededed]">{s.username}</span>
+                        <span className="text-[10px] text-neutral-500 font-mono truncate">{s.npub}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <input
                 type="text"
                 placeholder="Subject"
