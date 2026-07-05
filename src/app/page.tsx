@@ -1,6 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import {
+  bytesToNpub,
+  generateRandomPrivkey,
+  getPubkeyFromPrivkey,
+  encryptVault,
+  decryptVault,
+  deriveKeyFromPassword,
+  deriveKeyFromMnemonic,
+  createNewMnemonic,
+  bytesToHex,
+} from "@/lib/tmp/crypto";
+import { resolveIdentifier } from "@/lib/tmp/resolver";
+import { NostrRelayPool, signEvent, type NostrEvent } from "@/lib/tmp/nostr";
+import { buildEnvelope, wrapForNostr } from "@/lib/tmp/builder";
+import { decodeEnvelope } from "@/lib/tmp/codec";
 
 interface Email {
   id: string;
@@ -12,13 +27,20 @@ interface Email {
   folder: "inbox" | "sent" | "drafts";
   protocolVersion: string;
   encrypted: boolean;
+  rawEvent?: NostrEvent;
 }
+
+const DEFAULT_RELAYS = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.nostr.band"
+];
 
 export default function Home() {
   // Navigation & UI States
   const [activeFolder, setActiveFolder] = useState<"inbox" | "sent" | "drafts">("inbox");
   const [isConnectDrawerOpen, setIsConnectDrawerOpen] = useState(false);
-  const [selectedEmailId, setSelectedEmailId] = useState<string | null>("1");
+  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
@@ -29,61 +51,319 @@ export default function Home() {
     alias: string;
     authMethod: "None" | "Passkey" | "Password" | "Mnemonic";
     domain: string;
-  }>({
-    npub: "npub17x...8p2q9",
-    alias: "nathfavour",
-    authMethod: "None",
-    domain: "tendon.org",
+  }>(() => {
+    if (typeof window !== "undefined") {
+      const savedCreds = localStorage.getItem("tendon_active_creds");
+      if (savedCreds) {
+        try {
+          return JSON.parse(savedCreds);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    return {
+      npub: "",
+      alias: "",
+      authMethod: "None",
+      domain: "",
+    };
   });
+
+  const [activePrivKey, setActivePrivKey] = useState<Uint8Array | null>(null);
 
   // Drawer interaction states
   const [tempAlias, setTempAlias] = useState("nathfavour");
-  const [tempDomain, setTempDomain] = useState("tendon.org");
+  const [tempDomain, setTempDomain] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.location.host;
+    }
+    return "";
+  });
   const [authStep, setAuthStep] = useState<"choose" | "passkey" | "password" | "mnemonic">("choose");
   const [passwordInput, setPasswordInput] = useState("");
   const [mnemonicInput, setMnemonicInput] = useState("");
+  const [generatedMnemonic, setGeneratedMnemonic] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   // Email storage state
-  const [emails, setEmails] = useState<Email[]>([
-    {
-      id: "1",
-      sender: "system@tendon.org",
-      senderName: "Tendon Core",
-      subject: "Welcome to Tendon Message Protocol (TMP) v3",
-      body: "Welcome to Tendon Message Protocol (TMP) v3. This client runtime is running locally. All state reconciliation, decryption pipelines, and vault parameters are contained within your device's sandbox. Relays are utilized as blind, untrusted transport packets.\n\nEnjoy peer-to-peer asynchronous communications over standard domain namespaces.",
-      time: "22:15",
-      folder: "inbox",
-      protocolVersion: "3.0.0",
-      encrypted: true,
-    },
-    {
-      id: "2",
-      sender: "newsletter@substack.com",
-      senderName: "Substack Digest",
-      subject: "Decentralized Mailbox Protocols: A Deepdive",
-      body: "The landscape of local-first protocols is changing rapidly. SMTP/PGP was historically too complex for non-technical users. TMP combines static DNS registries (.well-known/tendon.json) with secure WebAuthn hardware-backed keys to create a standard that delivers email convenience with PGP security.",
-      time: "18:42",
-      folder: "inbox",
-      protocolVersion: "3.0.0",
-      encrypted: false,
-    },
-    {
-      id: "3",
-      sender: "auracrab@superteam.solana",
-      senderName: "Auracrab purple-48",
-      subject: "PR Merged: Escrow Program Audit Review",
-      body: "We have finalized auditing the Solana Escrow repository. The PR has been successfully merged at github.com/dhyon/solana-escrow/pull/1.\n\nThanks for your contribution to the program audit!",
-      time: "Yesterday",
-      folder: "inbox",
-      protocolVersion: "3.0.0",
-      encrypted: true,
-    },
-  ]);
+  const [emails, setEmails] = useState<Email[]>(() => {
+    if (typeof window !== "undefined") {
+      const cached = localStorage.getItem("tendon_emails_cache");
+      if (cached) {
+        try {
+          return JSON.parse(cached);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    return [];
+  });
 
   // Composer Form States
   const [composeTo, setComposeTo] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
+
+  // Relay connection status
+  const [connectedRelays, setConnectedRelays] = useState<number>(0);
+  const relayPoolRef = useRef<NostrRelayPool | null>(null);
+
+  // Initialize domain default based on browser window
+  useEffect(() => {
+    // handled in state initializers
+  }, []);
+
+  // Save emails to localStorage when updated
+  useEffect(() => {
+    if (emails.length > 0) {
+      localStorage.setItem("tendon_emails_cache", JSON.stringify(emails));
+    }
+  }, [emails]);
+
+  // Connect to relays and subscribe to incoming messages
+  useEffect(() => {
+    if (!credentials.npub || !activePrivKey) {
+      if (relayPoolRef.current) {
+        relayPoolRef.current.close();
+        relayPoolRef.current = null;
+      }
+      setTimeout(() => setConnectedRelays(0), 0);
+      return;
+    }
+
+    const myHexPub = bytesToHex(getPubkeyFromPrivkey(activePrivKey));
+    console.log("Subscribing to messages for public key hex:", myHexPub);
+
+    const pool = new NostrRelayPool(DEFAULT_RELAYS);
+    relayPoolRef.current = pool;
+    pool.connect();
+
+    // Check connections periodically
+    const interval = setInterval(() => {
+      let count = 0;
+      // @ts-expect-error sockets is private
+      for (const socket of pool.sockets.values()) {
+        if (socket.readyState === WebSocket.OPEN) count++;
+      }
+      setConnectedRelays(count);
+    }, 2000);
+
+    pool.addListener((event: NostrEvent) => {
+      // We only care about kind 1059 (unicast envelope wrapper)
+      if (event.kind !== 1059) return;
+
+      // Extract the recipient
+      const pTag = event.tags.find(t => t[0] === "p")?.[1];
+      const isSentByMe = event.pubkey === myHexPub;
+      const isForMe = pTag === myHexPub;
+
+      if (!isForMe && !isSentByMe) return;
+
+      try {
+        const envelope = decodeEnvelope(event.content);
+        if (envelope.payload.kind === "unicast_mail") {
+          const mail = envelope.payload.value;
+          
+          const newEmail: Email = {
+            id: event.id,
+            sender: isSentByMe ? `${credentials.alias}@${credentials.domain}` : `npub1${event.pubkey.substring(0, 8)}...`,
+            senderName: isSentByMe ? "Me" : `User ${event.pubkey.substring(0, 6)}`,
+            subject: mail.subject || "(No Subject)",
+            body: mail.body_plaintext,
+            time: new Date(envelope.dispatch_timestamp_utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            folder: isSentByMe ? "sent" : "inbox",
+            protocolVersion: String(envelope.protocol_version),
+            encrypted: true,
+            rawEvent: event
+          };
+
+          setEmails((prev) => {
+            if (prev.some(e => e.id === newEmail.id)) return prev;
+            return [newEmail, ...prev];
+          });
+        }
+      } catch (e) {
+        console.error("Failed to decode incoming envelope:", e);
+      }
+    });
+
+    // Subscribe to events where I am the recipient or the sender
+    pool.subscribe("my-inbox", [
+      { kinds: [1059], "#p": [myHexPub] },
+      { kinds: [1059], authors: [myHexPub] }
+    ]);
+
+    return () => {
+      clearInterval(interval);
+      pool.close();
+      relayPoolRef.current = null;
+    };
+  }, [credentials, activePrivKey]);
+
+  // Connect helper
+  const handleConnectSetup = async () => {
+    setIsLoading(true);
+    setErrorMsg("");
+    try {
+      const alias = tempAlias.trim().toLowerCase();
+      const domain = tempDomain.trim();
+      if (!alias || !domain) {
+        throw new Error("Alias and domain must not be empty");
+      }
+
+      let privateKeyBytes: Uint8Array;
+      let methodUsed: typeof credentials.authMethod = "None";
+
+      if (authStep === "passkey") {
+        methodUsed = "Passkey";
+        const credIdKey = `tendon_passkey_cred_id_${alias}@${domain}`;
+        const vaultKey = `tendon_vault_${alias}@${domain}`;
+        const savedCredId = localStorage.getItem(credIdKey);
+        
+        let prfKey: Uint8Array;
+        if (savedCredId) {
+          // Log in with existing passkey
+          prfKey = await loginPasskey(savedCredId);
+          const savedVault = JSON.parse(localStorage.getItem(vaultKey) || "");
+          privateKeyBytes = await decryptVault(savedVault, prfKey);
+        } else {
+          // Register new passkey
+          const { key, credentialIdHex } = await registerPasskey(alias);
+          prfKey = key;
+          localStorage.setItem(credIdKey, credentialIdHex);
+          
+          // Generate new keys and encrypt vault
+          privateKeyBytes = generateRandomPrivkey();
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+          const vault = await encryptVault(privateKeyBytes, prfKey, salt);
+          localStorage.setItem(vaultKey, JSON.stringify(vault));
+        }
+      } else if (authStep === "password") {
+        methodUsed = "Password";
+        const vaultKey = `tendon_vault_${alias}@${domain}`;
+        const savedVaultRaw = localStorage.getItem(vaultKey);
+
+        if (savedVaultRaw) {
+          const savedVault = JSON.parse(savedVaultRaw);
+          const prfKey = await deriveKeyFromPassword(passwordInput, savedVault.salt);
+          privateKeyBytes = await decryptVault(savedVault, prfKey);
+        } else {
+          privateKeyBytes = generateRandomPrivkey();
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+          const prfKey = await deriveKeyFromPassword(passwordInput, bytesToHex(salt));
+          const vault = await encryptVault(privateKeyBytes, prfKey, salt);
+          localStorage.setItem(vaultKey, JSON.stringify(vault));
+        }
+      } else if (authStep === "mnemonic") {
+        methodUsed = "Mnemonic";
+        if (!mnemonicInput.trim()) {
+          throw new Error("Mnemonic recovery phrase required");
+        }
+        privateKeyBytes = deriveKeyFromMnemonic(mnemonicInput);
+      } else {
+        throw new Error("Invalid authentication pathway selection");
+      }
+
+      const pubKey = getPubkeyFromPrivkey(privateKeyBytes);
+      const npub = bytesToNpub(pubKey);
+
+      // Register identity on the local tendon.json endpoint if on this domain
+      try {
+        await fetch(`http://${domain}/.well-known/tendon.json`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: alias, npub }),
+        });
+      } catch (e) {
+        console.warn("Could not register identity on local tendon.json server:", e);
+      }
+
+      const activeCreds = { npub, alias, authMethod: methodUsed, domain };
+      setCredentials(activeCreds);
+      setActivePrivKey(privateKeyBytes);
+      localStorage.setItem("tendon_active_creds", JSON.stringify(activeCreds));
+      setIsConnectDrawerOpen(false);
+    } catch (e) {
+      console.error(e);
+      setErrorMsg((e as Error).message || "Decryption or authentication failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSendEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!composeTo || !activePrivKey || !credentials.npub) return;
+
+    try {
+      setIsLoading(true);
+      setErrorMsg("");
+
+      // 1. Resolve receiver npub
+      const resolved = await resolveIdentifier(composeTo);
+      console.log("Resolved target:", resolved);
+
+      // 2. Build envelope
+      const envelope = buildEnvelope({
+        kind: "unicast_mail",
+        value: {
+          message_id: crypto.randomUUID(),
+          thread_id: crypto.randomUUID(),
+          subject: composeSubject || "(No Subject)",
+          body_plaintext: composeBody,
+          cc_recipients_npub: [],
+          attachments: [],
+        },
+      });
+
+      // 3. Wrap for Nostr targeting recipient npub
+      const myHexPub = bytesToHex(getPubkeyFromPrivkey(activePrivKey));
+      const nostrEnvelope = wrapForNostr(envelope, [["p", resolved.hex]]);
+
+      // 4. Sign and publish
+      const signedEvent = signEvent({
+        pubkey: myHexPub,
+        created_at: nostrEnvelope.created_at_unix,
+        kind: nostrEnvelope.kind,
+        tags: nostrEnvelope.tags,
+        content: nostrEnvelope.content_base64,
+      }, activePrivKey);
+
+      if (relayPoolRef.current) {
+        await relayPoolRef.current.publish(signedEvent);
+      }
+
+      const newEmail: Email = {
+        id: signedEvent.id,
+        sender: `${credentials.alias}@${credentials.domain}`,
+        senderName: "Me",
+        subject: composeSubject || "(No Subject)",
+        body: composeBody,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        folder: "sent",
+        protocolVersion: "3.0.0",
+        encrypted: true,
+        rawEvent: signedEvent
+      };
+
+      setEmails((prev) => [newEmail, ...prev]);
+      setComposeTo("");
+      setComposeSubject("");
+      setComposeBody("");
+      setIsComposeOpen(false);
+      
+      handleSelectFolder("sent");
+      setSelectedEmailId(newEmail.id);
+    } catch (e) {
+      console.error(e);
+      alert(`Failed to send secure message: ${(e as Error).message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSelectFolder = (folder: "inbox" | "sent" | "drafts") => {
     setActiveFolder(folder);
@@ -96,59 +376,15 @@ export default function Home() {
     }
   };
 
-  const handleConnectSetup = () => {
-    const randomHex = Array.from({ length: 16 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join("");
-    const newNpub = `npub1${randomHex}...${randomHex.substring(0, 4)}`;
-
-    let method: "None" | "Passkey" | "Password" | "Mnemonic" = "None";
-    if (authStep === "passkey") method = "Passkey";
-    else if (authStep === "password") method = "Password";
-    else if (authStep === "mnemonic") method = "Mnemonic";
-
-    setCredentials({
-      npub: newNpub,
-      alias: tempAlias,
-      domain: tempDomain,
-      authMethod: method,
-    });
-    setIsConnectDrawerOpen(false);
-  };
-
-  const handleSendEmail = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!composeTo) return;
-
-    const newEmail: Email = {
-      id: String(emails.length + 1),
-      sender: `${credentials.alias}@${credentials.domain}`,
-      senderName: credentials.alias,
-      subject: composeSubject || "(No Subject)",
-      body: composeBody,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      folder: "sent",
-      protocolVersion: "3.0.0",
-      encrypted: true,
-    };
-
-    setEmails((prev) => [newEmail, ...prev]);
-    setComposeTo("");
-    setComposeSubject("");
-    setComposeBody("");
-    setIsComposeOpen(false);
-    
-    handleSelectFolder("sent");
-    setSelectedEmailId(newEmail.id);
-  };
-
   const handleResetAuth = () => {
     setCredentials({
-      npub: "npub17x...8p2q9",
-      alias: "nathfavour",
+      npub: "",
+      alias: "",
       authMethod: "None",
-      domain: "tendon.org",
+      domain: "",
     });
+    setActivePrivKey(null);
+    localStorage.removeItem("tendon_active_creds");
     setAuthStep("choose");
   };
 
@@ -168,7 +404,7 @@ export default function Home() {
   const selectedEmail = emails.find((e) => e.id === selectedEmailId);
 
   return (
-    <div className="p-3 md:p-5 h-screen w-screen bg-[#0b0a09] flex flex-col overflow-hidden">
+    <div className="p-3 md:p-5 h-screen w-screen bg-[#0b0a09] flex flex-col overflow-hidden text-neutral-200">
       
       {/* Tactile Outer Frame Panel */}
       <div className="flex flex-col flex-1 bg-[#161412] border border-white/5 rounded-2xl shadow-[0_16px_48px_rgba(0,0,0,0.8)] overflow-hidden pb-16 md:pb-0">
@@ -229,8 +465,10 @@ export default function Home() {
           <aside className="hidden md:flex flex-col justify-between w-60 border-r border-white/5 p-4 bg-[#161412]">
             <div>
               <button 
-                className="flex items-center justify-center gap-2 bg-[#0b0a09] text-emerald-400 border border-white/5 hover:border-emerald-500 font-semibold py-2.5 px-4 rounded-xl w-full text-xs hover:-translate-y-[1px] hover:shadow-[0_4px_16px_rgba(16,185,129,0.15)] active:scale-[0.99] cursor-pointer transition-all mb-6"
+                className="flex items-center justify-center gap-2 bg-[#0b0a09] text-emerald-400 border border-white/5 hover:border-emerald-500 font-semibold py-2.5 px-4 rounded-xl w-full text-xs hover:-translate-y-[1px] hover:shadow-[0_4px_16px_rgba(16,185,129,0.15)] active:scale-[0.99] cursor-pointer transition-all mb-6 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => setIsComposeOpen(true)}
+                disabled={!activePrivKey}
+                title={!activePrivKey ? "Please connect your vault first" : ""}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="12" y1="5" x2="12" y2="19" />
@@ -265,18 +503,6 @@ export default function Home() {
                   <span>Send</span>
                 </div>
                 <div
-                  className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs cursor-pointer transition-all ${
-                    activeFolder === "drafts" ? "bg-[#0b0a09] text-emerald-400 border border-white/5 shadow-inner" : "text-[#a3a3a3] hover:text-[#ededed]"
-                  }`}
-                  onClick={() => handleSelectFolder("drafts")}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
-                  <span>Drafts</span>
-                </div>
-                <div
                   className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs cursor-pointer transition-all text-[#a3a3a3] hover:text-[#ededed]`}
                   onClick={() => setIsConnectDrawerOpen(true)}
                 >
@@ -290,8 +516,8 @@ export default function Home() {
             </div>
 
             <div className="font-mono text-[9px] text-[#a3a3a3] text-center pt-4 border-t border-white/5">
-              <div>PORT: 5003</div>
-              <div className="mt-0.5 text-emerald-400">TMP v3.0.0</div>
+              <div>RELAYS: {connectedRelays} CONNECTED</div>
+              <div className="mt-0.5 text-emerald-400">TMP v3.0.1</div>
             </div>
           </aside>
 
@@ -309,7 +535,21 @@ export default function Home() {
                 </span>
               </div>
 
-              {filteredEmails.length === 0 ? (
+              {!activePrivKey ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-[#a3a3a3] gap-3 p-10 text-center">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                  <span className="text-xs max-w-xs">Connect your identity/vault to start receiving and sending encrypted messages on the Nostr network.</span>
+                  <button
+                    className="mt-2 bg-emerald-500 text-black px-4 py-2 rounded-lg font-mono text-xs font-bold hover:scale-[1.02] transition-transform"
+                    onClick={() => setIsConnectDrawerOpen(true)}
+                  >
+                    CONNECT NOW
+                  </button>
+                </div>
+              ) : filteredEmails.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-[#a3a3a3] gap-3 p-10">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="2" y="4" width="20" height="16" rx="2" />
@@ -366,14 +606,15 @@ export default function Home() {
                       </svg>
                     </button>
                     <div className="flex gap-2">
-                      <button className="bg-[#161412] border border-white/5 text-[#ededed] px-3 py-1.5 rounded-lg text-xs hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer">
+                      <button 
+                        className="bg-[#161412] border border-white/5 text-[#ededed] px-3 py-1.5 rounded-lg text-xs hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+                        onClick={() => {
+                          setComposeTo(selectedEmail.sender);
+                          setComposeSubject(`Re: ${selectedEmail.subject}`);
+                          setIsComposeOpen(true);
+                        }}
+                      >
                         Reply
-                      </button>
-                      <button className="bg-[#161412] border border-white/5 text-[#ededed] px-3 py-1.5 rounded-lg text-xs hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer">
-                        Forward
-                      </button>
-                      <button className="bg-[#161412] border border-white/5 text-[#ededed] px-3 py-1.5 rounded-lg text-xs hover:border-red-500 hover:text-red-400 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer">
-                        Delete
                       </button>
                     </div>
                   </div>
@@ -392,24 +633,26 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="p-5 border-t border-white/5 bg-[#161412]/20 mt-auto">
-                    <h4 className="text-[9px] font-mono text-[#a3a3a3] uppercase tracking-wider mb-2">
-                      DECRYPTED ENVELOPE METADATA (TMP SPEC)
-                    </h4>
-                    <pre className="font-mono text-[9px] bg-[#161412] border border-white/5 p-3 rounded-lg text-emerald-400 overflow-x-auto whitespace-pre">
-                      {JSON.stringify(
-                        {
-                          protocol_version: selectedEmail.protocolVersion,
-                          sender_pubkey: credentials.npub,
-                          envelope_signature: "secp256k1:0x3fa99b4...",
-                          payload_encrypted: selectedEmail.encrypted,
-                          local_hydration_status: "verified_dns_match",
-                        },
-                        null,
-                        2
-                      )}
-                    </pre>
-                  </div>
+                  {selectedEmail.rawEvent && (
+                    <div className="p-5 border-t border-white/5 bg-[#161412]/20 mt-auto">
+                      <h4 className="text-[9px] font-mono text-[#a3a3a3] uppercase tracking-wider mb-2">
+                        DECRYPTED ENVELOPE METADATA (TMP SPEC)
+                      </h4>
+                      <pre className="font-mono text-[9px] bg-[#161412] border border-white/5 p-3 rounded-lg text-emerald-400 overflow-x-auto whitespace-pre">
+                        {JSON.stringify(
+                          {
+                            protocol_version: selectedEmail.protocolVersion,
+                            sender_pubkey: selectedEmail.rawEvent.pubkey,
+                            envelope_signature: selectedEmail.rawEvent.sig.substring(0, 20) + "...",
+                            payload_encrypted: selectedEmail.encrypted,
+                            local_hydration_status: "verified_dns_match",
+                          },
+                          null,
+                          2
+                        )}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-[#a3a3a3] text-xs gap-4 p-10 text-center">
@@ -426,67 +669,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Mobile Bottom Navbar (Deep ash background) */}
-      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#161412] border-t border-white/5 z-40 justify-around items-center px-4">
-        <button 
-          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
-            activeFolder === "inbox" && mobileView === "list" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
-          }`}
-          onClick={() => handleSelectFolder("inbox")}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-          </svg>
-          <span>Inbox</span>
-        </button>
-        <button 
-          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
-            activeFolder === "sent" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
-          }`}
-          onClick={() => handleSelectFolder("sent")}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-          <span>Send</span>
-        </button>
-        <button 
-          className="flex flex-col items-center justify-center w-10 h-10 bg-[#0b0a09] border border-white/5 text-emerald-400 rounded-full hover:scale-105 active:scale-95 transition-all shadow-[0_4px_12px_rgba(16,185,129,0.2)] cursor-pointer"
-          onClick={() => setIsComposeOpen(true)}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
-        <button 
-          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
-            activeFolder === "drafts" ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
-          }`}
-          onClick={() => handleSelectFolder("drafts")}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-          </svg>
-          <span>Drafts</span>
-        </button>
-        <button 
-          className={`flex flex-col items-center justify-center gap-1 text-[9px] cursor-pointer transition-colors ${
-            isConnectDrawerOpen ? "text-emerald-400 font-semibold" : "text-[#a3a3a3]"
-          }`}
-          onClick={() => setIsConnectDrawerOpen(true)}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-          <span>Settings</span>
-        </button>
-      </nav>
-
       {/* Connection Settings Bottom Drawer Overlay */}
       {isConnectDrawerOpen && (
         <div 
@@ -496,7 +678,7 @@ export default function Home() {
       )}
 
       {/* Connection Settings Bottom Drawer Sheet */}
-      <div className={`fixed bottom-0 left-0 right-0 bg-[#161412] border-t border-[#34322f] rounded-t-2xl z-[1000] transition-transform duration-300 transform flex flex-col max-h-[75vh] ${
+      <div className={`fixed bottom-0 left-0 right-0 bg-[#161412] border-t border-[#34322f] rounded-t-2xl z-[1000] transition-transform duration-300 transform flex flex-col max-h-[85vh] ${
         isConnectDrawerOpen ? "translate-y-0 shadow-[0_-12px_36px_rgba(0,0,0,0.6),_0_16px_48px_rgba(0,0,0,0.8)]" : "translate-y-full"
       }`}>
         <div className="flex justify-between items-center p-5 border-b border-white/5 bg-[#0b0a09]/30">
@@ -522,7 +704,7 @@ export default function Home() {
               </div>
 
               <div className="flex flex-col gap-1.5 mb-4">
-                <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">SEC256K1 PUBLIC ADDRESS (npub)</span>
+                <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">SECP256K1 PUBLIC ADDRESS (npub)</span>
                 <div className="font-mono text-xs bg-[#161412] border border-white/5 p-2.5 rounded-lg text-emerald-400 break-all">
                   {credentials.npub}
                 </div>
@@ -544,6 +726,12 @@ export default function Home() {
             </div>
           ) : (
             <>
+              {errorMsg && (
+                <div className="mb-4 p-3 bg-red-900/30 border border-red-500/30 rounded-xl text-xs text-red-400 font-mono">
+                  {errorMsg}
+                </div>
+              )}
+
               {authStep === "choose" && (
                 <div className="bg-[#0b0a09] border border-white/5 rounded-xl p-5 mb-5 shadow-inner">
                   <div className="text-xs font-semibold text-[#ededed] mb-2">Select Decryption Mechanism</div>
@@ -558,7 +746,7 @@ export default function Home() {
                     >
                       <strong className="text-xs text-[#ededed]">Pathway 1: WebAuthn Passkey (Secure Enclave)</strong>
                       <span className="text-[10px] text-[#a3a3a3]">
-                        Unwrap keys via stable biometric/hardware signature generation
+                        Unwrap keys via stable biometric/hardware signature generation (PRF)
                       </span>
                     </button>
                     <button
@@ -572,7 +760,10 @@ export default function Home() {
                     </button>
                     <button
                       className="text-left bg-[#161412] border border-white/5 hover:border-emerald-500/50 p-4 rounded-xl cursor-pointer hover:scale-[1.01] transition-all flex flex-col gap-1"
-                      onClick={() => setAuthStep("mnemonic")}
+                      onClick={() => {
+                        setAuthStep("mnemonic");
+                        setGeneratedMnemonic(createNewMnemonic());
+                      }}
                     >
                       <strong className="text-xs text-[#ededed]">Pathway 3: Recovery Mnemonic Seed</strong>
                       <span className="text-[10px] text-[#a3a3a3]">
@@ -598,7 +789,7 @@ export default function Home() {
                   </div>
 
                   <div className="flex flex-col gap-2 mb-6">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verified DNS Domain</span>
+                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verified DNS Domain (defaults to current host)</span>
                     <input
                       type="text"
                       className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
@@ -611,14 +802,16 @@ export default function Home() {
                     <button
                       className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-2.5 rounded-xl text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.01] transition-all cursor-pointer"
                       onClick={() => setAuthStep("choose")}
+                      disabled={isLoading}
                     >
                       BACK
                     </button>
                     <button
-                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer"
+                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
                       onClick={handleConnectSetup}
+                      disabled={isLoading}
                     >
-                      AUTHENTICATE HARDWARE
+                      {isLoading ? "PROMPTING..." : "AUTHENTICATE HARDWARE"}
                     </button>
                   </div>
                 </div>
@@ -638,6 +831,16 @@ export default function Home() {
                     />
                   </div>
 
+                  <div className="flex flex-col gap-2 mb-4">
+                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verified DNS Domain</span>
+                    <input
+                      type="text"
+                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+                      value={tempDomain}
+                      onChange={(e) => setTempDomain(e.target.value)}
+                    />
+                  </div>
+
                   <div className="flex flex-col gap-2 mb-6">
                     <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Decryption Password</span>
                     <input
@@ -653,14 +856,16 @@ export default function Home() {
                     <button
                       className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-2.5 rounded-xl text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.01] transition-all cursor-pointer"
                       onClick={() => setAuthStep("choose")}
+                      disabled={isLoading}
                     >
                       BACK
                     </button>
                     <button
-                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer"
+                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
                       onClick={handleConnectSetup}
+                      disabled={isLoading}
                     >
-                      DERIVE KEY
+                      {isLoading ? "DERIVING..." : "DERIVE KEY"}
                     </button>
                   </div>
                 </div>
@@ -680,8 +885,25 @@ export default function Home() {
                     />
                   </div>
 
+                  <div className="flex flex-col gap-2 mb-4">
+                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Verified DNS Domain</span>
+                    <input
+                      type="text"
+                      className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50"
+                      value={tempDomain}
+                      onChange={(e) => setTempDomain(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2 mb-4">
+                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Generated Recovery Phrase (Or input your own below)</span>
+                    <div className="bg-[#161412] border border-white/5 rounded-lg p-3 text-xs text-emerald-400 font-mono select-all">
+                      {generatedMnemonic}
+                    </div>
+                  </div>
+
                   <div className="flex flex-col gap-2 mb-6">
-                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">12/24 Word Mnemonic Seed</span>
+                    <span className="font-mono text-[9px] text-[#a3a3a3] uppercase">Input Recovery Phrase</span>
                     <textarea
                       className="bg-[#161412] border border-white/5 rounded-lg p-2.5 text-xs text-[#ededed] font-mono outline-none focus:border-emerald-500/50 resize-none"
                       rows={3}
@@ -695,14 +917,16 @@ export default function Home() {
                     <button
                       className="flex-1 bg-[#161412] border border-white/5 text-[#ededed] py-2.5 rounded-xl text-xs font-semibold hover:border-emerald-500 hover:text-emerald-400 hover:scale-[1.01] transition-all cursor-pointer"
                       onClick={() => setAuthStep("choose")}
+                      disabled={isLoading}
                     >
                       BACK
                     </button>
                     <button
-                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer"
+                      className="flex-2 bg-emerald-500 text-black py-2.5 rounded-xl text-xs font-bold hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] transition-all cursor-pointer flex justify-center items-center gap-2 disabled:opacity-50"
                       onClick={handleConnectSetup}
+                      disabled={isLoading}
                     >
-                      RECOVER VAULT
+                      {isLoading ? "RECOVERING..." : "RECOVER VAULT"}
                     </button>
                   </div>
                 </div>
@@ -718,7 +942,7 @@ export default function Home() {
           {/* Mobile/Desktop compose backdrop */}
           <div className="fixed inset-0 bg-black/75 backdrop-blur-[2px] z-50" onClick={() => setIsComposeOpen(false)} />
           
-          <div className="fixed inset-x-3 bottom-3 md:inset-auto md:bottom-8 md:right-8 md:w-[480px] h-[85vh] md:h-[460px] bg-[#161412] border border-[#34322f] rounded-2xl shadow-[0_12px_48px_rgba(0,0,0,0.9)] flex flex-col z-50 overflow-hidden">
+          <div className="fixed inset-x-3 bottom-3 md:inset-auto md:bottom-8 md:right-8 md:w-[480px] h-[85vh] md:h-[460px] bg-[#161412] border border-[#34322f] rounded-2xl shadow-[0_12px_48px_rgba(0,0,0,0.9)] flex flex-col z-50 overflow-hidden text-neutral-200">
             <div className="bg-[#0b0a09] px-5 py-3.5 flex justify-between items-center border-b border-white/5">
               <span className="text-xs font-bold text-[#ededed]">New Secure Message</span>
               <button className="text-[#a3a3a3] hover:text-[#ededed] p-1 cursor-pointer transition-colors" onClick={() => setIsComposeOpen(false)}>
@@ -760,12 +984,13 @@ export default function Home() {
                 <button 
                   type="submit" 
                   className="bg-emerald-500 text-black font-semibold px-5 py-2.5 rounded-lg text-xs hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center gap-2 cursor-pointer"
+                  disabled={isLoading}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="22" y1="2" x2="11" y2="13" />
                     <polygon points="22 2 15 22 11 13 2 9 22 2" />
                   </svg>
-                  <span>SEND EMAIL</span>
+                  <span>{isLoading ? "SENDING..." : "SEND EMAIL"}</span>
                 </button>
               </div>
             </form>
