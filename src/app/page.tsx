@@ -141,6 +141,7 @@ export default function Home() {
   const [isCheckingPasswordOnchain, setIsCheckingPasswordOnchain] = useState(false);
   const [passwordExistsOnchain, setPasswordExistsOnchain] = useState<boolean | null>(null);
   const [resolvedUsername, setResolvedUsername] = useState("");
+  const [searchedNpubHint, setSearchedNpubHint] = useState("");
   const [isDeleteAccountDrawerOpen, setIsDeleteAccountDrawerOpen] = useState(false);
   const [deleteConfirmUsername, setDeleteConfirmUsername] = useState("");
 
@@ -167,27 +168,33 @@ export default function Home() {
               const [name] = foundEntry;
               setIsAliasTaken(true);
               setResolvedUsername(name);
+              setSearchedNpubHint(input);
             } else {
               setIsAliasTaken(null);
               setResolvedUsername("");
+              setSearchedNpubHint("");
             }
           } else {
             const alias = input.toLowerCase();
             if (data.names && data.names[alias]) {
               setIsAliasTaken(true);
               setResolvedUsername("");
+              setSearchedNpubHint(data.names[alias]);
             } else {
               setIsAliasTaken(false);
               setResolvedUsername("");
+              setSearchedNpubHint("");
             }
           }
         } else {
           setIsAliasTaken(false);
           setResolvedUsername("");
+          setSearchedNpubHint("");
         }
       } catch {
         setIsAliasTaken(false);
         setResolvedUsername("");
+        setSearchedNpubHint("");
       }
     }, 250);
 
@@ -835,6 +842,7 @@ export default function Home() {
                           if (!e.target.value.trim()) {
                             setIsAliasTaken(null);
                             setResolvedUsername("");
+                            setSearchedNpubHint("");
                           }
                         }}
                       />
@@ -852,7 +860,10 @@ export default function Home() {
                           {isAliasTaken === true ? (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                              <span className="text-amber-400">Registered account (will trigger login)</span>
+                              <span className="text-amber-400">
+                                Registered account (will trigger login)
+                                {searchedNpubHint && ` • Key: ${searchedNpubHint.substring(0, 5)}...${searchedNpubHint.substring(searchedNpubHint.length - 5)}`}
+                              </span>
                             </>
                           ) : isAliasTaken === false ? (
                             <>
