@@ -158,6 +158,24 @@ export default function Home() {
   const [directoryNames, setDirectoryNames] = useState<Record<string, string>>({});
   const [isAliasTaken, setIsAliasTaken] = useState<boolean | null>(null);
 
+  const getAliasValidationError = (val: string): string => {
+    const input = val.trim();
+    if (!input) return "";
+    if (input.startsWith("npub1")) {
+      return "This is a public key (npub). To login with a public key directly, please use the Recovery Phrase option.";
+    }
+    if (input.length < 3) {
+      return "Username is too short (minimum 3 characters)";
+    }
+    if (input.length > 25) {
+      return "Username is too long (maximum 25 characters)";
+    }
+    if (!/^[a-zA-Z0-9_\-]+$/.test(input)) {
+      return "Username contains invalid characters (use only alphanumeric, underscores, or hyphens)";
+    }
+    return "";
+  };
+
   useEffect(() => {
     const input = tempAlias.trim();
     if (!input) return;
@@ -166,7 +184,7 @@ export default function Home() {
       try {
         const domain = typeof window !== "undefined" ? window.location.host : "localhost:5003";
         const scheme = domain.includes("localhost") || domain.includes("127.0.0.1") || domain.includes(":") ? "http" : "https";
-        const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json?t=${Date.now()}`, {
+        const response = await fetch(`${scheme}://${domain}/.well-known/tendon.json?t=${new Date().getTime()}`, {
           headers: { "Cache-Control": "no-cache" }
         });
         if (response.ok) {
@@ -1175,6 +1193,7 @@ export default function Home() {
   });
 
   const selectedEmail = emails.find((e) => e.id === selectedEmailId);
+  const aliasError = getAliasValidationError(tempAlias);
 
   return (
     <div className="p-3 md:p-5 h-screen w-screen bg-[#0b0a09] flex flex-col overflow-hidden text-neutral-200 antialiased font-sans">
@@ -1235,8 +1254,12 @@ export default function Home() {
                         }}
                       />
                     </div>
-                    {/* Username taken / available badge */}
-                    {tempAlias.trim() !== "" && (
+                    {aliasError && (
+                      <div className="text-amber-500 text-[10px] leading-relaxed mt-1 animate-fadeIn font-semibold">
+                        {aliasError}
+                      </div>
+                    )}
+                    {tempAlias.trim() !== "" && !aliasError && (
                       <div className="mt-1 flex flex-col gap-1 px-1 font-mono text-[9px]">
                         {resolvedUsername && (
                           <div className="flex items-center gap-1.5 text-emerald-400 font-semibold mb-0.5 animate-fadeIn">
@@ -1306,8 +1329,12 @@ export default function Home() {
               <button
                 className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
                 onClick={() => {
-                  if (!credentials.alias && !tempAlias.trim()) {
+                  if (!credentials.alias && loginMethod !== "mnemonic" && !tempAlias.trim()) {
                     setErrorMsg("Please enter a username alias first");
+                    return;
+                  }
+                  if (!credentials.alias && loginMethod !== "mnemonic" && getAliasValidationError(tempAlias)) {
+                    setErrorMsg("Please resolve username validation warnings first");
                     return;
                   }
                   if (!credentials.alias) {
@@ -1435,7 +1462,7 @@ export default function Home() {
             ) : (
               <button 
                 className="flex items-center gap-2 bg-[#0b0a09] text-emerald-400 border border-white/5 px-3 py-1.5 rounded-lg font-mono text-[10px] hover:border-emerald-500 hover:scale-[1.01] transition-all cursor-pointer"
-                onClick={() => setIsConnectDrawerOpen(true)}
+                onClick={() => setShowOnboarding(true)}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
