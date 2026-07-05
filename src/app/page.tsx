@@ -215,9 +215,7 @@ export default function Home() {
 
   // Save emails to localStorage when updated
   useEffect(() => {
-    if (emails.length > 0) {
-      localStorage.setItem("tendon_emails_cache", JSON.stringify(emails));
-    }
+    localStorage.setItem("tendon_emails_cache", JSON.stringify(emails));
   }, [emails]);
 
   // Connect to relays and subscribe to incoming messages
@@ -572,6 +570,29 @@ export default function Home() {
     }
   };
 
+  const handleSaveDraft = () => {
+    if (!composeTo && !composeSubject && !composeBody) return;
+    
+    const draftEmail: Email = {
+      id: crypto.randomUUID(),
+      sender: composeTo,
+      senderName: "Draft",
+      subject: composeSubject || "(No Subject)",
+      body: composeBody,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      folder: "drafts",
+      protocolVersion: "3.0.0",
+      encrypted: false,
+    };
+    
+    setEmails(prev => [draftEmail, ...prev]);
+    setIsComposeOpen(false);
+    setComposeTo("");
+    setComposeSubject("");
+    setComposeBody("");
+    setSuccessMsg("Draft saved successfully!");
+  };
+
   const handleSelectFolder = (folder: "inbox" | "sent" | "drafts") => {
     setActiveFolder(folder);
     setMobileView("list");
@@ -617,15 +638,30 @@ export default function Home() {
       {showOnboarding && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md">
           <div className="w-full max-w-lg bg-[#161412] border border-white/10 rounded-2xl p-6 md:p-8 shadow-[0_24px_64px_rgba(0,0,0,0.9)] transition-all">
-            <div className="flex flex-col items-center text-center mb-8">
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-xl font-bold font-mono shadow-[0_0_20px_rgba(16,185,129,0.2)] mb-4">
-                T
+            {credentials.alias ? (
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-xl font-bold font-mono shadow-[0_0_20px_rgba(16,185,129,0.2)] mb-4">
+                  T
+                </div>
+                <h1 className="text-xl md:text-2xl font-bold text-[#ededed] tracking-tight">Unlock Your Mailbox</h1>
+                <p className="text-xs text-neutral-400 mt-2 max-w-md">
+                  Please authenticate using your passkey to unwrap your encryption keys and load your mailbox.
+                </p>
+                <div className="font-mono text-xs bg-[#0b0a09] border border-white/5 px-4 py-2.5 rounded-lg text-emerald-400 mt-4">
+                  {credentials.alias}@{credentials.domain}
+                </div>
               </div>
-              <h1 className="text-xl md:text-2xl font-bold text-[#ededed] tracking-tight">Mint Your Secure Username</h1>
-              <p className="text-xs text-neutral-400 mt-2 max-w-md">
-                Tendon Mail operates fully serverless. Secure your mailbox using hardware passkeys or high-entropy local vaults.
-              </p>
-            </div>
+            ) : (
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-xl font-bold font-mono shadow-[0_0_20px_rgba(16,185,129,0.2)] mb-4">
+                  T
+                </div>
+                <h1 className="text-xl md:text-2xl font-bold text-[#ededed] tracking-tight">Mint Your Secure Username</h1>
+                <p className="text-xs text-neutral-400 mt-2 max-w-md">
+                  Tendon Mail operates fully serverless. Secure your mailbox using hardware passkeys.
+                </p>
+              </div>
+            )}
 
             {errorMsg && (
               <div className="mb-4 p-3 bg-red-900/30 border border-red-500/20 rounded-xl text-xs text-red-400 font-mono text-center">
@@ -634,25 +670,27 @@ export default function Home() {
             )}
 
             <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Username</label>
-                  <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
-                    <input
-                      type="text"
-                      placeholder="e.g. carol"
-                      className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
-                      value={tempAlias}
-                      onChange={(e) => setTempAlias(e.target.value)}
-                    />
+              {!credentials.alias && (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">Username</label>
+                    <div className="flex bg-[#0b0a09] border border-white/10 rounded-xl px-4 py-3 items-center focus-within:border-emerald-500/50 transition-colors">
+                      <input
+                        type="text"
+                        placeholder="e.g. carol"
+                        className="bg-transparent border-none text-[#ededed] text-sm outline-none w-full font-mono placeholder:text-neutral-600"
+                        value={tempAlias}
+                        onChange={(e) => setTempAlias(e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               <button
                 className="w-full bg-emerald-500 text-black font-bold py-3.5 px-4 rounded-xl text-xs hover:shadow-[0_4px_20px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
                 onClick={() => {
-                  if (!tempAlias.trim()) {
+                  if (!credentials.alias && !tempAlias.trim()) {
                     setErrorMsg("Please enter a username alias first");
                     return;
                   }
@@ -663,8 +701,19 @@ export default function Home() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M12 2a5 5 0 0 0-5 5v4H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zM9 7a3 3 0 0 1 6 0v4H9V7zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
                 </svg>
-                <span>{isLoading ? "CONNECTING..." : "CONNECT WITH PASSKEY"}</span>
+                <span>{isLoading ? "CONNECTING..." : credentials.alias ? "UNLOCK WITH PASSKEY" : "CONNECT WITH PASSKEY"}</span>
               </button>
+
+              {credentials.alias && (
+                <div className="flex justify-center mt-2">
+                  <button
+                    className="text-[10px] text-neutral-500 hover:text-emerald-400 font-mono transition-colors cursor-pointer"
+                    onClick={handleResetAuth}
+                  >
+                    Sign in with another account &rarr;
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -767,6 +816,18 @@ export default function Home() {
                   <span>Send</span>
                 </div>
                 <div
+                  className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs cursor-pointer transition-all ${
+                    activeFolder === "drafts" ? "bg-[#0b0a09] text-emerald-400 border border-white/5 shadow-inner" : "text-[#a3a3a3] hover:text-[#ededed]"
+                  }`}
+                  onClick={() => handleSelectFolder("drafts")}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <span>Drafts</span>
+                </div>
+                <div
                   className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-xs cursor-pointer transition-all text-[#a3a3a3] hover:text-[#ededed]`}
                   onClick={() => setIsConnectDrawerOpen(true)}
                 >
@@ -832,15 +893,25 @@ export default function Home() {
                         selectedEmailId === email.id ? "bg-[#161412] border-white/5" : "bg-transparent border-transparent"
                       }`}
                       onClick={() => {
-                        setSelectedEmailId(email.id);
-                        setMobileView("detail");
+                        if (email.folder === "drafts") {
+                          setComposeTo(email.sender);
+                          setComposeSubject(email.subject);
+                          setComposeBody(email.body);
+                          setEmails(prev => prev.filter(e => e.id !== email.id));
+                          handleOpenCompose();
+                        } else {
+                          setSelectedEmailId(email.id);
+                          setMobileView("detail");
+                        }
                       }}
                     >
                       {selectedEmailId === email.id && (
                         <div className="absolute left-0 top-3 bottom-3 w-[2.5px] bg-emerald-400 rounded"></div>
                       )}
                       <div className="flex justify-between items-center mb-1">
-                        <span className="text-xs font-semibold text-[#ededed]">{email.senderName}</span>
+                        <span className="text-xs font-semibold text-[#ededed]">
+                          {email.folder === "drafts" ? `To: ${email.sender || "(No Recipient)"}` : email.senderName}
+                        </span>
                         <span className="font-mono text-[9px] text-[#a3a3a3]">{email.time}</span>
                       </div>
                       <div className="text-xs font-medium text-[#ededed] mb-1">{email.subject}</div>
@@ -1244,17 +1315,27 @@ export default function Home() {
                 <span className="font-mono text-[9px] text-[#a3a3a3] bg-[#0b0a09] px-2.5 py-1 rounded-lg border border-white/5 uppercase">
                   Protobuf binary payload
                 </span>
-                <button 
-                  type="submit" 
-                  className="bg-emerald-500 text-black font-semibold px-5 py-2.5 rounded-lg text-xs hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center gap-2 cursor-pointer"
-                  disabled={isLoading}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                  <span>{isLoading ? "SENDING..." : "SEND EMAIL"}</span>
-                </button>
+                <div className="flex gap-2">
+                  <button 
+                    type="button" 
+                    className="bg-white/5 border border-white/5 hover:border-emerald-500/50 hover:text-emerald-400 text-[#ededed] font-semibold px-4 py-2.5 rounded-lg text-xs transition-all cursor-pointer"
+                    onClick={handleSaveDraft}
+                    disabled={isLoading}
+                  >
+                    Save Draft
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="bg-emerald-500 text-black font-semibold px-5 py-2.5 rounded-lg text-xs hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center gap-2 cursor-pointer"
+                    disabled={isLoading}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                    <span>{isLoading ? "SENDING..." : "SEND EMAIL"}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
