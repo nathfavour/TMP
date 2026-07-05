@@ -81,8 +81,8 @@ export class NostrRelayPool {
             console.error("Error processing message from relay:", e);
           }
         };
-        ws.onerror = (err) => {
-          console.error(`WebSocket error on ${url}:`, err);
+        ws.onerror = () => {
+          console.warn(`WebSocket connection failed or was rate-limited on ${url}`);
         };
         ws.onclose = () => {
           console.log(`Disconnected from relay: ${url}`);
